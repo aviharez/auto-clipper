@@ -1,0 +1,19 @@
+source: https://www.youtube.com/watch?v=g1m7BpZRTvc
+default_captions: true
+
+hook:
+  enabled: true
+  duration: 3
+  background: blur_self
+
+clips:
+  - start: "4:41"
+    end: "5:40"
+    title: "Kenapa Akting Victoria Secret Bikin Nadin Trauma?"
+    hook_text: "Dari kecil nonton Victoria Secret sampai akhirnya terjun ke dunia seni, tapi kenapa Nadin malah ngerasa akting itu aneh banget?"
+
+  - start: "12:05"
+    end: "13:04"
+    title: "Cara Nadin Masuk Binus Tanpa Sepengetahuan Orang Tua"
+    hook_text: "Nekat daftar kuliah lewat beasiswa tanpa bilang Mami, ternyata ini alasan Nadin memilih langkah berani tersebut!"
+

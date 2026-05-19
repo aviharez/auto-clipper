@@ -1,0 +1,13 @@
+source: https://www.youtube.com/watch?v=Nhj5PiDEqHU
+default_captions: true
+
+hook:
+  enabled: true
+  duration: 3
+  background: blur_self
+
+clips:
+  - start: "7:33"
+    end: "8:40"
+    title: "Tragedi Kostum Bola di Pernikahan Ari Kriting"
+    hook_text: "Niat hati mau meeting project gede, eh malah dijebak datang ke pernikahan Ari Kriting pakai kostum bola!"

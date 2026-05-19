@@ -1,0 +1,660 @@
+# Clip Automation App — Implementation Plan
+
+> **Purpose of this document.** This is an execution-ready specification for building a
+> YouTube clip-automation tool. It is written to be handed to an AI coding agent
+> (Claude Sonnet 4.6) as authoritative context. Every architectural decision below was
+> deliberated and locked; the rationale is included so the implementing agent does not
+> "optimize" away decisions that look suboptimal in isolation but are correct in context.
+>
+> **How to use this document.** Build in the iteration order given in §9. Do not skip
+> ahead. Prove the end-to-end loop before adding polish. When a decision says "locked
+> rationale," treat the rationale as a constraint, not a suggestion.
+
+---
+
+## 1. What this product is
+
+A tool that turns long-form source videos into short, vertical, captioned clips for a
+YouTube clips channel, with two modes:
+
+- **Manual mode** — the user supplies a list of timestamps (and per-clip metadata) in an
+  input file. The tool executes them.
+- **Auto mode** — the tool reads the source transcript and an LLM proposes
+  clip-worthy segments. (Built last; see §8.)
+
+Both modes converge to the **same internal data shape** (a list of candidate segments)
+after which the entire downstream pipeline is identical and mode-agnostic.
+
+### Application form (locked)
+
+**A local web app.** A Python backend (FastAPI) plus a minimal browser frontend, all
+running on the user's own laptop; the user opens `localhost` to review and approve clips.
+Not an Electron/Tauri desktop app (the wrapper adds complexity with no benefit for
+single-user personal use, since a Python backend is required either way for ffmpeg/video
+work). Not CLI-only (the boundary-refine control in §8 needs a visual nudge UI; doing it
+via text commands cripples the single most valuable manual-mode feature).
+
+**Only the `dashboard/` component is affected by this choice.** Every other stage
+(ingest, transcribe, cut, hook, caption, publish) is headless background processing and
+is identical regardless of application form.
+
+### Designed-in extensibility (seam now, build later)
+
+The product must extend beyond individual clips to other output types — notably
+**ranked compilation videos** (e.g. "Top 5 Funny Moments"): multiple segments stitched
+into ONE video with inter-segment number cards, instead of multiple separate clips.
+
+This is **not** a "make it do anything" mandate (that leads to over-abstraction that
+slows the first feature). The observation is narrower and exact: a ranked compilation
+starts from the *same* `Candidate` list as normal clipping. The only difference is what
+happens *after* the candidate list exists — normal clipping renders each candidate as a
+separate video; ranked compilation renders all candidates and stitches them into one
+with number cards. Ingest, transcription, the convergence contract, and the detector are
+all untouched.
+
+Therefore the extension point is a single new swappable seam — **assembly** (the final
+render step) — following the same "seam now, implementations added over time" pattern
+already used for `Transcriber`, `CandidateSource`, and scoring signals. See §2 and §10.
+`assembly/ranked.py` is a **future extension, not initial scope** (same status as auto
+mode).
+
+### Constraints that shaped this design
+
+- **Content source: licensed/permitted creators.** Even with creator permission, source
+  content may contain third-party music/footage that YouTube Content ID matches against
+  regardless of private agreements. Therefore a human review gate exists before publish.
+  Fully hands-off auto-posting on borrowed content is explicitly out of scope.
+- **Hardware: AMD Ryzen 7 8845HS, integrated Radeon 780M, no NVIDIA GPU.** For this
+  workload the iGPU is effectively not a GPU (the ML tooling ecosystem is CUDA-bound;
+  ROCm on integrated graphics is not worth pursuing). Implication: transcription runs as
+  a hosted API; everything else runs on CPU locally.
+- **Volume: a few clips per week.** Background processing latency is irrelevant. This
+  justifies "precision over speed" everywhere and makes per-clip API cost negligible.
+- **Priorities, ranked:** (1) fully automated end-to-end, (2) best clip quality,
+  (3) cheap to run, (4) fast to get working. "Fast to get working" is lowest — build it
+  properly modular from the start.
+
+---
+
+## 2. Architecture overview
+
+A job flows through stages. Each stage is a standalone module that reads and writes a
+single shared job record. **No stage calls the next stage directly** — a runner advances
+the job. This is what allows rebuilding any single stage (especially the detector and
+the boundary-refine logic) without touching the rest.
+
+```
+clipper/
+  jobs.py            # job record: status, paths, metadata, results. SQLite to start.
+  runner.py          # picks up jobs, advances them stage by stage; reads CandidateSource
+                     #   properties to decide transcription scope + review strictness
+  config.py          # caption style, hook defaults, model choice, clip-length bounds
+  transcribe/
+    base.py          # Transcriber interface: audio -> words[] (word-level + speaker)
+    api.py           # hosted-API implementation (default)
+    local.py         # optional future local impl (only if NVIDIA hardware appears)
+  candidates/
+    base.py          # CandidateSource: .generate(job) -> [Candidate]
+                     #   also declares .needs_full_transcription, .review_strictness
+    manual.py        # parses the YAML clip spec  (BUILD FIRST)
+    auto.py          # wraps detect + scoring/    (BUILD LAST)
+  stages/
+    ingest.py        # yt-dlp -> source.mp4 + metadata.json
+    cut.py           # ffmpeg -> per-candidate clip, PRECISE (re-encode), 9:16 reframe
+    hook.py          # build 2-4s opener segment, prepend to main clip
+    caption.py       # burn word-level "viral style" captions (ASS-based)
+    publish.py       # YouTube Data API, scheduled
+  assembly/          # final render step — swappable; runs AFTER candidates are cut/styled
+    base.py          # Assembler interface: .assemble(styled_clips, job) -> output(s)
+    individual.py    # each candidate -> its own video  (BUILD FIRST; default)
+    ranked.py        # all candidates -> ONE video + number cards  (FUTURE EXTENSION)
+  scoring/           # used ONLY by candidates/auto.py; not invoked in manual mode
+    base.py          # Signal interface: .score(candidate, context) -> 0..1
+    llm.py           # "is this a complete, engaging thought" pass
+    audio.py         # loudness / laughter peaks (librosa)
+    pacing.py        # words-per-second spikes
+    combine.py       # weighted sum -> final ranking; weights live in config.py
+  dashboard/         # FastAPI + minimal frontend: preview, refine boundaries, approve
+```
+
+**Locked rationale (modularity).** The boundary-refine review step (§7) and cheap
+detector iteration both depend on each stage being independently re-runnable against an
+existing job record. If the pipeline were one script, nudging a clip boundary by one
+second would force re-ingest and re-transcription (the expensive stage). Keep stages
+independent and job-record-driven. This is non-negotiable.
+
+---
+
+## 3. The convergence contract
+
+Both modes produce the same object. Everything after this point is mode-agnostic.
+
+### 3.1 Candidate object
+
+```
+Candidate {
+  start: float            # SECONDS, not "12:34". Precision for ffmpeg.
+  end: float              # SECONDS
+  title: string
+  source_job_id: string
+  hook_text: string|null  # opener text; user-written in manual, LLM-written in auto
+  hook_enabled: bool
+  hook_background: string # "blur_self" (default) or path to an external asset
+  needs_caption: bool
+  caption_preset: string|null  # null -> use config default preset
+  hook_preset: string|null     # null -> use config default preset
+  rank: int|null          # null for normal clips; set for ranked compilation ordering
+  origin: "manual"|"auto"
+}
+```
+
+**Locked rationale (seconds, not timecodes).** Timecode strings ("12:34") are converted
+to seconds exactly once, at input-parse time. The rest of the system only knows seconds.
+This prevents time-conversion bugs from being scattered across stages.
+
+**Locked rationale (`rank` field reserved now).** Normal clipping ignores `rank` (null).
+Ranked compilation (`assembly/ranked.py`, future) needs an ordering across candidates.
+Reserving the optional field now means the convergence contract does not get reworked
+when ranked assembly is added — same reasoning as keeping `hook_text` before auto mode
+existed. Do not remove this field because it is unused in the initial build.
+
+### 3.2 How each mode declares its needs
+
+`CandidateSource` exposes two properties the runner reads:
+
+- `needs_full_transcription: bool`
+- `review_strictness: "full" | "preview_only"`
+
+| Mode   | needs_full_transcription | review_strictness | Reasoning |
+|--------|--------------------------|-------------------|-----------|
+| manual | `false`                  | `preview_only`    | User already exercised editorial judgment at input time. Only span transcription (for captions) is needed, lazily, and only if captions are on. |
+| auto   | `true`                   | `full`            | LLM must read the whole transcript to find moments; machine-chosen moments need a real keep/reject review. |
+
+**Locked rationale (mode-aware, not global).** Transcription scope and review strictness
+differ by mode. The runner reads these two properties instead of branching on a global
+"mode" flag, so adding a future mode does not require touching the runner or any
+downstream stage.
+
+### 3.3 Manual-mode input schema (YAML)
+
+```yaml
+source: https://youtube.com/watch?v=xxxx
+default_captions: true
+
+hook:
+  enabled: true            # default for all clips
+  duration: 3              # seconds
+  background: blur_self    # default: blurred frames from the clip itself
+
+clips:
+  - start: "12:30"         # human writes timecodes; converted to seconds on parse
+    end: "13:45"
+    title: "his take on X"
+    hook_text: "Why would he say this on record?"
+
+  - start: "47:02"
+    end: "48:10"
+    title: "the funny bit about Y"
+    hook_text: "Didn't expect him to say this 😂"
+    hook_background: intro_brand.mp4   # per-clip override (external asset)
+
+  - start: "55:10"
+    end: "56:00"
+    title: "the serious part"
+    hook_text: "Listen to this one slowly."
+    hook: false                        # per-clip: no hook at all
+```
+
+**Locked rationale (defaults + per-clip override).** Top-level `hook` / `default_captions`
+set defaults set once; per-clip keys override only when a clip differs. `hook_text` is
+the one field that must be written per clip (each clip's hook line is unique). This keeps
+the file terse even with many clips. Same pattern used consistently across the design.
+
+---
+
+## 4. Ingestion & transcription
+
+- **Ingest** (`stages/ingest.py`): `yt-dlp` pulls the source video + metadata into the
+  job's working directory.
+- **Transcription** (`transcribe/`): provider-swappable behind a `Transcriber` interface
+  returning a standard `words[]` shape with **word-level timestamps and speaker labels**.
+  Default implementation is a **hosted API** (cost is cents per source-hour; far better
+  than grinding CPU). If the chosen API does not return word-level timestamps, run cheap
+  base transcription via API and do the lightweight alignment step locally.
+
+**Locked rationale (word-level is mandatory, not optional).** Word-level timing is
+required twice downstream: (a) the "viral style" caption highlight of the currently
+spoken word (§6), and (b) the auto "snap to sentence boundary" review suggestion (§7).
+Sentence-level timing makes both impossible. This is why transcription provider choice
+is a foundational decision, not a detail.
+
+**Transcription scope is mode-driven.** Auto mode requests full-source transcription up
+front. Manual mode requests transcription of clipped spans only, lazily, after candidates
+exist, and skips it entirely if captions are off. The runner decides this from
+`needs_full_transcription` — stages do not hardcode it.
+
+---
+
+## 5. Cutting & vertical reframe (`stages/cut.py`)
+
+### 5.1 Cutting — precision is mandatory
+
+ffmpeg can cut two ways:
+
+- **Stream copy** — fast, no re-encode, but cuts snap to keyframes: clip start can freeze
+  briefly or be off by 1–2 seconds.
+- **Re-encode** — slower, but the cut lands exactly on the requested second, clean, no
+  freeze.
+
+**Locked decision: always re-encode. Never stream-copy for clip cuts.** At this volume,
+speed is irrelevant (background job). A 2-second drift or a frozen first frame instantly
+reads as amateur. Do not let a future optimization pass swap this to stream copy.
+
+### 5.2 Vertical reframe (16:9 → 9:16)
+
+Never stretch (squished faces). Never default to letterbox bars (lazy look). Crop so the
+relevant person stays visible.
+
+Multi-tier build. **Each tier must be proven before the next; a later tier is a layer on
+top of the earlier, never a replacement — so the system can always fall back.**
+
+1. **Tier 1 (Iteration 1, DONE): fixed center crop.** Crop a 9:16 window centered, set
+   once. Proven. Known limitation (by design): blind to who is on screen — with 2+ people
+   the speaker can fall outside the crop. This is the expected trigger to move to Tier 2,
+   not a bug.
+
+2. **Tier 2a (Iteration 2, build first): multi-face "fit all", NO speaker guessing.**
+   Detect all faces in a segment (every 5–10 frames; CPU-friendly). One face → crop to
+   it (Tier 1 behavior, refined). Two+ faces → choose the 9:16 crop that **contains all
+   faces** if they fit; if they cannot fit in 9:16, fall to a stacked top/bottom
+   split-screen. This does NOT guess who is speaking — it only guarantees everyone is
+   visible. It already resolves the concrete complaint ("speaker not visible") in most
+   cases, because if all faces are in frame the speaker necessarily is too. Must run and
+   be proven before Tier 2b.
+
+3. **Tier 2b (Iteration 2, build on top of proven 2a): active speaker detection.**
+   Add lip-motion-to-audio matching to determine the active speaker per time segment;
+   the crop moves smoothly to follow the active speaker, and split-screen is used ONLY
+   when two people genuinely speak in rapid alternation in the same window. Built as a
+   layer above 2a so a 2b failure always falls back to 2a's reliable "show everyone"
+   behavior. This is a quality upgrade (more dynamic, pro-tool feel), NOT a bug fix —
+   2a already fixes the bug.
+
+**Locked rationale (smoothing is the hard part).** A crop that snaps directly to raw
+position jitters and is nauseating. The reframe is "detect → collect positions over the
+clip → smooth into a camera path → crop along the path," not "detect → crop." Most DIY
+tools fail here.
+
+**Locked rationale (speaker decision is per-segment, not per-frame).** In Tier 2b the
+active-speaker choice must hold for a minimum of several seconds before it may switch,
+even if instantaneous detection wobbles. Switching the crop per frame produces violent
+person-to-person jumps — far worse than the §5.2 jitter problem. The crop must "stick"
+to one person, then transition smoothly. This is the single biggest cause of
+cheap-looking DIY clips.
+
+**Locked rationale (split-screen is explicit, not the confusion fallback).** Split is
+permitted ONLY when two people genuinely alternate speaking within the same tight window.
+Uncertainty must NOT trigger split (that yields a flickering split). When unsure, the
+safe behavior is to stay on the last clearly-speaking person, never to split.
+
+**Locked rationale (best accuracy on this CPU costs large processing time).** Accurate
+active-speaker detection relies on lip-motion/audio matching, which is inherently heavy
+and ecosystem-built for GPU. On the no-NVIDIA machine (ledger #5), Tier 2b can mean a
+60s clip taking very long to process — acceptable only because volume is a few
+clips/week and processing is background/unattended. This cost is accepted deliberately;
+do not "optimize" Tier 2b by silently dropping to a less accurate method without surfacing
+the choice.
+
+---
+
+## 6. Captions — "viral style" (`stages/caption.py`)
+
+Target style (content-agnostic; works for podcast, education, comedy alike):
+
+1. Only 1–3 words on screen at once, changing fast with speech.
+2. The currently spoken word is highlighted (distinct color or colored box).
+3. Bold, large sans-serif; ~8–12% of screen height per glyph.
+4. Thick black outline + shadow — **mandatory for legibility over any background**, not
+   decoration.
+5. Position centered, ~25–35% up from the bottom (the very bottom is covered by
+   TikTok/Shorts UI).
+6. Subtle "pop" on word appearance (assertive, not a soft fade).
+
+**Implementation: ASS/SSA subtitles burned via ffmpeg.** ASS supports rich styling
+(color, outline, bold, per-word highlight via timing tricks) and is far lighter on CPU
+than per-frame image rendering. Start with ASS. Only consider per-frame rendering if a
+future animation genuinely cannot be done in ASS.
+
+**Locked rationale (CPU reality).** Burning captions re-encodes the video and is the
+slowest stage on a GPU-less machine. At this volume that is acceptable, but it is an
+additional reason to prefer lightweight ASS over per-frame rendering.
+
+Caption style is defined as **named presets** in `config.py`. The user does not edit
+individual properties; they pick one whole preset. A preset is the default for all clips
+and can be overridden **per clip at review time** (Tier A — preset selection only, NOT a
+free-form editor).
+
+```yaml
+caption_presets:
+  default: bold_yellow          # which preset applies if a clip specifies none
+
+  bold_yellow:
+    words_on_screen: 3
+    font_file: "assets/fonts/Montserrat-Bold.ttf"   # BUNDLED file, not a system name
+    font_size_pct: 9
+    color_normal: "#FFFFFF"
+    color_active: "#FFE000"
+    outline_color: "#000000"
+    outline_width: 6
+    shadow: true
+    position_from_bottom_pct: 30
+    pop_animation: true
+
+  clean_white:
+    words_on_screen: 2
+    font_file: "assets/fonts/Inter-Bold.ttf"
+    font_size_pct: 8
+    color_normal: "#FFFFFF"
+    color_active: "#FFFFFF"
+    outline_color: "#000000"
+    outline_width: 4
+    shadow: true
+    position_from_bottom_pct: 28
+    pop_animation: false
+```
+
+`Candidate` gains an optional `caption_preset: string|null` (null → use the default).
+Hook presets follow the same structure (`hook_presets` block + optional
+`hook_preset` on `Candidate`).
+
+**Locked rationale (presets, not a free-form editor).** Per-clip style is preset
+*selection*, not per-property editing. A full visual editor (drag text, live preview) is
+a separate project the size of the rest of the app and is explicitly out of scope —
+building it would violate the "prove the loop first" principle for speculative gain on a
+single-user tool. Tier A gives ~80% of the value at ~10% of the cost. If preset
+selection later proves insufficient, per-property editing (Tier B) is a clear additive
+step — but do not start there.
+
+**Locked rationale (fonts are bundled files, not system names).** ffmpeg/ASS can only
+render a font whose file actually exists in the environment. A preset naming a font that
+is not installed does NOT error loudly — ffmpeg silently substitutes an ugly default and
+the mistake is only caught by eyeballing the output. Therefore every preset references a
+font **file bundled in the project** (`assets/fonts/*.ttf|otf`), never a system font
+name. Consequence: each font offered in a preset must have its file committed to the
+project. This guarantees identical output wherever the app runs and eliminates the
+silent-substitution bug.
+
+**Locked rationale (style override changes §earlier global assumption).** Caption style
+was originally specified as a single global value. Allowing per-clip preset override
+changes that: style is now "global default preset + optional per-clip preset". This is a
+deliberate amended decision, not a free addition. The per-clip selected preset is part
+of the `Candidate` object so it survives into the assembly/publish stages. Regenerating
+after a preset change re-runs ONLY `caption.py`/`hook.py` for that clip (not
+ingest/transcribe) — this is cheap precisely because of the §2 modular design.
+
+---
+
+## 7. Hook opener (`stages/hook.py`)
+
+The hook is a short **2–4 second opener segment** prepended to the main clip. It is two
+layers: a **background** (default: blurred frames from the clip itself; optional: an
+external asset) and **overlay text** (`hook_text`) centered and large.
+
+Pipeline order: `cut.py` → **`hook.py`** → `caption.py` → review → publish.
+
+Background options:
+
+- **`blur_self` (default):** take a few seconds / a still frame from the main clip, blur
+  heavily, place text over it. No external asset needed — works automatically for every
+  clip. This is the default behavior.
+- **External asset (per-clip override):** a branding intro clip or image, supplied via
+  `hook_background`. Built last within Iteration 2 (needs asset-file handling).
+
+Three locked technical requirements for `hook.py`:
+
+1. **The hook segment must match the main clip's spec exactly** (same 9:16 resolution,
+   framerate, codec). `hook.py` therefore runs *after* the main clip is already vertical,
+   so it can mirror the spec. Mismatched specs cause concat errors or a visible jump.
+2. **Text legibility is guaranteed, not optional.** Add a thin semi-dark layer between
+   background and text, or white text with a strong outline/shadow. Unreadable hook text
+   = failed hook.
+3. **The hook→main-clip join must be seamless.** Identical specs (req. 1) are what
+   prevent a freeze/glitch at the join — same principle as the precise-cut decision.
+
+**Locked rationale (auto-mode seam).** In manual mode `hook_text` is user-written. In
+auto mode the LLM writes `hook_text` while selecting the clip. The schema already
+anticipates this; no rework needed when auto mode is added.
+
+---
+
+## 8. Review + boundary refinement (`dashboard/`)
+
+This is the **most valuable feature in manual mode**. User-estimated timestamps almost
+always drift at the edges; the worst tell is a clip ending mid-sentence. This stage
+closes that gap.
+
+Two cooperating layers:
+
+- **Layer 1 — auto "snap to sentence boundary" suggestion.** Using word-level timestamps
+  (already available from transcription), detect when `start`/`end` falls mid-word and
+  compute the nearest sentence boundary as `suggested_start`/`suggested_end`. **Present
+  it as a suggestion, never auto-apply** — the user may be cutting mid-sentence
+  deliberately (cliffhanger).
+- **Layer 2 — manual ± nudge.** In the review UI, shift start/end forward/back by a few
+  seconds and regenerate. Handles taste ("intro too long, trim 2s"), not just sentence
+  boundaries.
+
+Data flow: clip built with initial `start`/`end` → check boundaries against word
+timestamps → review UI shows preview + suggestion + nudge control → user accepts /
+accepts-suggestion / nudges → if boundaries change, **only cut → caption re-run for that
+clip** (not ingest/transcribe). This cheap re-run is a direct payoff of the §2 modular
+design.
+
+`review_strictness` (from §3.2) drives UI behavior:
+
+- `preview_only` (manual): preview + boundary suggestion + nudge. No keep/reject.
+- `full` (auto): the above **plus** keep/reject of machine-chosen candidates.
+
+**Locked rationale (review is core, not polish).** Caption/hook/tracking are polish and
+are deferred. Review is part of proving the end-to-end loop (cut → *review* → publish)
+and ships in Iteration 1 — but in Iteration 1 only Layer 2 (manual nudge), because
+Layer 1 depends on transcription, which arrives in Iteration 2. One transcription, two
+payoffs: captions and boundary suggestions.
+
+---
+
+## 8c. Dashboard surfaces & daily-use flow
+
+The dashboard is **only a place to inspect and approve** — not a control center. Most
+configuration lives in the YAML input and `config.py`. The dashboard grows per iteration;
+specified below per iteration.
+
+### Daily-use flow (manual mode)
+
+1. User watches the source video elsewhere, notes timestamps.
+2. User writes the YAML spec (§3.3).
+3. User submits the YAML to the app (upload field or watched folder) and clicks Process.
+4. App works headless in the background (download → cut → reframe). User does not wait.
+5. User opens the dashboard at `localhost`.
+6. User reviews each finished clip (preview; nudge boundaries if needed; regenerate).
+7. User approves the good clips.
+8. User triggers upload of approved clips to YouTube.
+
+The user only "works" at steps 1–2 and 6–8. Step 4 (the heavy part) is unattended.
+
+### Surfaces — Iteration 1 (minimal)
+
+- **Job list.** Landing page: batches with status (downloading / cutting / ready for
+  review / done-uploaded), plus the YAML submission entry point.
+- **Clip review page.** Per clip: vertical video preview (playable in-browser), title +
+  duration + start–end, **Layer 2 manual nudge** control + regenerate, Approve/Reject.
+  A single "Upload approved" button per batch triggers publish.
+
+No caption-style controls, no hook preview (neither exists in Iteration 1).
+
+### Surfaces — added in Iteration 2
+
+- Preview now shows the **fully styled** clip (captions + hook), not the raw cut.
+- **Layer 1 auto sentence-boundary suggestion** appears beside the manual nudge
+  ("shift end 13:49 → 13:51 to avoid cutting a sentence"; accept/reject).
+- **Per-clip preset selection** (Tier A): a caption-preset dropdown and a hook-preset
+  dropdown on each clip; changing one re-runs only `caption.py`/`hook.py` for that clip.
+- **History page** (see below).
+
+### Surfaces — Iteration 3 (when auto mode exists)
+
+- For auto-origin batches, `review_strictness="full"`: the review page additionally
+  shows keep/reject of machine-chosen candidates (not just boundary refinement). This is
+  exactly why `review_strictness` (§3.2) was reserved early — one review page serves both
+  modes at different strictness, read from one property.
+
+### Surfaces — Iteration 4 (when ranked compilation exists)
+
+- A way to set `Candidate.rank` (e.g. drag-to-order #5…#1) before ranked assembly runs.
+
+### History page (Iteration 2)
+
+**No new data is stored** — every job is already a job record in SQLite (§2). The history
+page is purely a read view over existing job records.
+
+- List of all clips ever produced, newest first.
+- Per clip: thumbnail/preview, title, source video, date, status
+  (uploaded / rejected / built-not-uploaded).
+- Filterable by source video and by status.
+
+**Locked rationale (history is a read, not a feature).** History adds no storage and no
+upstream change; it only renders job records that already exist. Its real value is
+preventing accidental re-clipping of the same moment from the same source — a genuine
+problem when regularly processing the same creators. It does not gate the core loop, so
+it is Iteration 2, not Iteration 1.
+
+---
+
+## 8b. Assembly — the extensibility seam (`assembly/`)
+
+The assembly step runs **after** candidates are cut, hooked, and captioned. It decides
+how the finished, styled segments become deliverable output(s). It is swappable behind
+an `Assembler` interface, exactly like `Transcriber` / `CandidateSource` / scoring
+signals.
+
+- **`assembly/individual.py` (default, built first).** Each styled candidate becomes its
+  own standalone video. This is the normal clipping behavior and the only assembler in
+  the initial build. What the pipeline did implicitly before now has an explicit name.
+- **`assembly/ranked.py` (future extension, NOT initial scope).** All styled candidates,
+  ordered by `Candidate.rank`, stitched into ONE video with inter-segment number cards
+  (e.g. "#5 … #1"). Plugs into the same point `individual.py` occupies; touches nothing
+  upstream.
+
+**Locked rationale (why a seam, not a rewrite).** A ranked compilation and normal
+clipping share everything up to and including styled segments — same ingest, same
+transcription, same convergence contract, same cut/hook/caption. They diverge only at
+final render (N separate files vs. 1 stitched file). Isolating that divergence to one
+swappable module means the extension is additive, like auto mode. Do **not** attempt to
+generalize beyond this (arbitrary output types) up front — that over-abstraction would
+slow the initial build for speculative gain. Add concrete assemblers when concretely
+needed.
+
+**Locked rationale (which stages are assembler-aware).** Only `runner.py` selects the
+assembler and only `assembly/*` differs. `cut.py`, `hook.py`, `caption.py` produce the
+same styled segments regardless of assembler — they must not branch on output type.
+Number cards in ranked mode are the assembler's concern, not the caption/hook stages'.
+
+---
+
+## 9. Build order (do not reorder)
+
+**Iteration 1 — prove the loop works.**
+- `jobs.py`, `runner.py`, `config.py` skeleton
+- `stages/ingest.py`
+- `candidates/manual.py` + the YAML schema (§3.3)
+- `stages/cut.py` with **precise re-encode** + **Tier 1 fixed center crop**
+- `assembly/individual.py` (the only assembler in initial scope)
+- `dashboard/` as a **local FastAPI web app** + preview + **Layer 2 manual nudge only**
+- `stages/publish.py` (manual trigger acceptable here)
+- Goal: a real clip goes in as a timestamp and comes out uploaded. No captions, no hook,
+  no tracking yet.
+
+**Iteration 2 — make it look professional.**
+
+> **Execute as ORDERED STEPS, one at a time, each tested before the next.** "Iteration 2"
+> is a label for a sequence, NOT a single batch request. Asking an agent to "do
+> Iteration 2" all at once stacks four heavy components on a foundation only proven on a
+> narrow path (1 face, center crop) — if output is wrong you cannot tell which component
+> failed. The "prove the simple thing before stacking the next" discipline that carried
+> Iteration 1 cleanly applies *within* Iteration 2, not only between iterations.
+
+- **Step 2.1 — Transcription alone.** Wire `transcribe/` (API impl). Verify word-level
+  timing + speaker labels are correct on test clips. Build NO captions yet. Rationale:
+  captions and Review Layer 1 both depend on this; if transcription drifts, both fail and
+  you will wrongly blame captions. Prove transcription clean in isolation first.
+- **Step 2.2 — Caption (ASS)** on top of proven transcription. Named presets + bundled
+  fonts. Verify on one clip: words appear, active word highlights, legible over
+  light/dark backgrounds.
+- **Step 2.3 — Hook** (`blur_self` first; external-asset override last).
+- **Step 2.4 — Reframe Tier 2a only** (multi-face "fit all"). Prove "everyone always
+  visible" on a 2-person clip and a many-person clip. Do NOT touch Tier 2b yet.
+- **Step 2.5 — Reframe Tier 2b** (active speaker detection) layered on proven 2a.
+  Hardest component in the app — never stack it before 2a is solid.
+- **Step 2.6 — Review Layer 1** (auto sentence-boundary suggestion; reuses 2.1
+  transcription).
+- **Step 2.7 — Dashboard additions** (per-clip preset dropdowns, styled preview,
+  History page). Last because lightest and lowest-risk.
+
+**Locked rationale (test each step before the next).** When using an AI agent to
+execute, supply this plan as context and request **only the current step**. Never
+request "Iteration 2". Test the step's output before requesting the next — the same
+discipline applied when Iteration 1 was tested before proceeding.
+
+**Iteration 3 — second mode (only if pursued).**
+- `scoring/` signals (`llm.py` weighted 1.0 first, heuristics added/tuned after)
+- `candidates/auto.py` plugging into the proven convergence point
+- Iterate scoring weights in `config.py` against clips judged good/bad
+
+**Iteration 4 — ranked compilation (future extension, only if pursued).**
+- `assembly/ranked.py`: order styled segments by `Candidate.rank`, stitch into one
+  video with inter-segment number cards
+- A way to populate `rank` (manual: a `rank:` key in the YAML; auto: LLM assigns it)
+- Plugs into the existing assembly seam; touches no upstream stage
+
+**Locked rationale (order de-risks itself).** Building the reliable deterministic half
+(manual) first validates ~80% of the system — the entire shared downstream pipeline and
+the convergence contract — before the unreliable detector is introduced. Building auto
+first means debugging an unproven pipeline and an unreliable detector simultaneously.
+Ranked assembly is last because it is a pure additive payoff of the assembly seam and
+must not compete with proving the core loop.
+
+---
+
+## 10. Decision ledger (quick reference — all locked)
+
+| # | Decision | Why it must not be reversed |
+|---|----------|------------------------------|
+| 1 | Stages are independent, job-record-driven | Cheap re-run on boundary nudge; detector iteration |
+| 2 | Both modes converge to one `Candidate` shape | Downstream pipeline stays 100% mode-agnostic |
+| 3 | Seconds internally; timecodes only at parse | Prevents scattered time-conversion bugs |
+| 4 | Mode declares needs via 2 properties | New modes don't touch runner/downstream |
+| 5 | Transcription = hosted API, word-level | No usable GPU; word timing needed for captions + boundary snap |
+| 6 | Cut = precise re-encode, never stream copy | Drift/freeze reads as amateur |
+| 7 | Reframe = smoothed camera path, not raw face | Raw tracking jitters; this is the hard 20% || 8 | Captions = ASS, style in config | CPU-light; tunable without code changes |
+| 9 | Hook segment matches main-clip spec exactly | Seamless concat; mismatch = glitch |
+| 10 | Review is Iteration 1 (Layer 2); Layer 1 in Iter 2 | Review is core not polish; Layer 1 needs transcription |
+| 11 | Build manual fully before auto | Validate pipeline with the reliable half first |
+| 12 | Human review gate before publish | Content ID risk on licensed content |
+| 13 | Application form = local FastAPI web app | Lightest for vibe-coding/personal use; visual nudge UI needs it |
+| 14 | Assembly is a swappable seam; `individual.py` only at first | Ranked compilation is additive, not a rewrite |
+| 15 | `rank` field reserved in `Candidate` now | Contract not reworked when ranked assembly is added |
+| 16 | cut/hook/caption never branch on output type | Keeps assembler the only output-aware module |
+| 17 | Per-clip style = preset selection only (Tier A) | Full visual editor is out of scope; presets give 80% at 10% cost |
+| 18 | Fonts are bundled project files, not system names | ffmpeg silently substitutes missing fonts — silent bug |
+| 19 | Style is global-default-preset + per-clip override | Amended from §6 single-global; preset lives on `Candidate` |
+| 20 | History is a read view over existing job records | No new storage; prevents duplicate clipping |
+| 21 | Dashboard is inspect/approve only, grows per iteration | Not a control center; not built fully up front |
+| 22 | Reframe Tier 2a (fit-all) before Tier 2b (speaker detect) | 2a fixes the bug; 2b is a layer on top, always falls back to 2a |
+| 23 | Speaker decision per-segment, sticks several seconds | Per-frame switching = violent jumps, cheap look |
+| 24 | Split-screen only on genuine alternation, never on doubt | Uncertainty → stay on last speaker, not flicker-split |
+| 25 | Tier 2b accuracy on this CPU costs large process time | Accepted (low volume, background); don't silently downgrade |
+| 26 | Iteration 2 executed as ordered steps, each tested | Stacking 4 heavy components blind = undiagnosable failure |
+
+---
+
+*End of plan. Build in §9 order. Treat §10 as constraints.*
