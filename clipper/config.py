@@ -89,8 +89,3 @@ REFRAME_CUT_REFINE_MARGIN = 0.20     # the 5fps scan locates a cut only to its ~
 REFRAME_CLUSTER_GAP_FRAC = 0.12      # cx gap > this frac of width separates face clusters
 REFRAME_SUBJECT_MIN_COVERAGE = 0.55  # a cluster present in >= this frac of a shot's frames
                                      # is a real subject (else: detector noise)
-
-# Switching into/out of split-screen is a big layout change; a short dip
-# through black softens it without the "drag" a cross-dissolve causes (a
-# dissolve superimposes the two layouts). Plain source cuts stay hard cuts.
-REFRAME_SPLIT_XFADE_SEC = 0.25       # dip-to-black length at split boundaries (0 = disable)

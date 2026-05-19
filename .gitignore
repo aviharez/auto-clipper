@@ -1,1 +1,40 @@
+# Job data — downloaded videos, clips, SQLite DB
 data/
+
+# YouTube OAuth token (never commit; client_secret.json also kept out for safety)
+credentials/token.json
+credentials/client_secret.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Distribution / packaging
+*.egg-info/
+dist/
+build/
+
+# Environment variables
+.env
+.env.*
+
+# Stray pip output files (e.g. "=0.30.0" leftover from a bad install command)
+=*
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+
+# Claude Code local settings
+.claude/settings.local.json
+
+# macOS
+.DS_Store

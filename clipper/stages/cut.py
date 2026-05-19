@@ -7,11 +7,8 @@ requested second (plan §5.1). The vertical reframe is delegated to
 segmented into camera shots, each reframed on its own. This stage encodes
 every shot separately and losslessly concatenates them into raw.mp4.
 
-Shots are joined losslessly (concat demuxer) when every boundary is a plain
-source cut. When the span contains a split-screen shot, the boundaries next
-to it are dipped through black instead — switching into/out of split-screen
-is a big layout change that looks rough as a hard cut — so those clips are
-joined with an xfade filter pass (one re-encode); plain cuts stay hard.
+Every shot boundary — including switches into and out of a split-screen
+shot — is a hard cut, joined losslessly with the concat demuxer.
 
 On any failure — planning, a shot encode, or the join — this stage falls
 back to a plain Tier 1 centre crop so a cut is always produced.
@@ -23,7 +20,6 @@ from pathlib import Path
 
 from clipper.config import (
     BASE_DIR, VIDEO_CRF, VIDEO_PRESET, AUDIO_BITRATE, JOBS_DIR,
-    REFRAME_SPLIT_XFADE_SEC,
 )
 from clipper.stages import reframe
 
@@ -103,86 +99,6 @@ def _concat(parts: list[Path], out_path: Path) -> None:
         raise RuntimeError(f"ffmpeg shot concat failed:\n{result.stderr[-1500:]}")
 
 
-def _probe_duration(path: Path) -> float:
-    """Container duration of an encoded shot, in seconds."""
-    r = subprocess.run(
-        ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
-         "-print_format", "json", str(path)],
-        capture_output=True, text=True, check=True,
-    )
-    return float(json.loads(r.stdout)["format"]["duration"])
-
-
-def _join_xfade(parts: list[Path], shots: list, out_path: Path,
-                has_audio: bool, fps: float) -> None:
-    """
-    Join shot clips, dipping through black at the boundaries next to a
-    split-screen shot and hard-cutting the rest. xfade overlaps (and so
-    shortens) the timeline by the transition length; acrossfade does the same
-    to audio, so the two streams stay in sync. Re-encodes once (decoded
-    frames required).
-    """
-    durs = [_probe_duration(p) for p in parts]
-    inputs: list[str] = []
-    for p in parts:
-        inputs += ["-i", str(p)]
-
-    chains: list[str] = []
-    # Normalise every input's frame rate + timebase first: xfade refuses to
-    # chain streams whose timebases differ, and concat/xfade emit AV_TIME_BASE
-    # while a raw mp4 input carries its own (e.g. 1/12800).
-    for k in range(len(parts)):
-        chains.append(f"[{k}:v]fps={fps:g},settb=AVTB[nv{k}]")
-        if has_audio:
-            chains.append(f"[{k}:a]asettb=AVTB[na{k}]")
-
-    # Build the join pairwise, left to right, tracking the accumulated length
-    # so each xfade's offset (where the dissolve starts) is exact.
-    prev_v, prev_a = "[nv0]", "[na0]"
-    acc = durs[0]
-    for k in range(1, len(parts)):
-        split_adj = shots[k - 1].mode == "split" or shots[k].mode == "split"
-        out_v, out_a = f"[v{k}]", f"[a{k}]"
-        if split_adj and REFRAME_SPLIT_XFADE_SEC > 0:
-            d = min(REFRAME_SPLIT_XFADE_SEC, 0.4 * durs[k - 1], 0.4 * durs[k])
-            # fadeblack (dip through black), NOT a cross-dissolve: a dissolve
-            # superimposes the two layouts, and since a face sits at very
-            # different places in a close-up vs a split-screen it appears to
-            # slide/"drag". Dipping through black never overlaps them.
-            chains.append(
-                f"{prev_v}[nv{k}]xfade=transition=fadeblack:"
-                f"duration={d:.3f}:offset={acc - d:.3f}{out_v}"
-            )
-            if has_audio:
-                chains.append(f"{prev_a}[na{k}]acrossfade=d={d:.3f}{out_a}")
-            acc += durs[k] - d
-        else:
-            chains.append(f"{prev_v}[nv{k}]concat=n=2:v=1:a=0{out_v}")
-            if has_audio:
-                chains.append(f"{prev_a}[na{k}]concat=n=2:v=0:a=1{out_a}")
-            acc += durs[k]
-        prev_v, prev_a = out_v, out_a
-
-    maps = ["-map", prev_v]
-    audio_args: list[str] = []
-    if has_audio:
-        maps += ["-map", prev_a]
-        audio_args = ["-c:a", "aac", "-b:a", AUDIO_BITRATE]
-
-    cmd = [
-        "ffmpeg", "-y", *inputs,
-        "-filter_complex", ";".join(chains),
-        *maps,
-        "-c:v", "libx264", "-crf", str(VIDEO_CRF), "-preset", VIDEO_PRESET,
-        *audio_args,
-        "-movflags", "+faststart",
-        str(out_path),
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise RuntimeError(f"ffmpeg shot xfade-join failed:\n{result.stderr[-1500:]}")
-
-
 def run(job: dict, candidate_id: str, candidate: dict) -> str:
     """Precisely re-encode + reframe a clip segment. Returns path to raw.mp4."""
     source = Path(job["source_video_path"])
@@ -210,8 +126,8 @@ def run(job: dict, candidate_id: str, candidate: dict) -> str:
         _encode_shot(source, rplan.shots[0], out_path, has_audio)
         return str(out_path)
 
-    # Multi-shot edited span -> encode each shot, then join them. Split-screen
-    # boundaries are cross-dissolved (xfade join); otherwise a lossless concat.
+    # Multi-shot edited span -> encode each shot, then losslessly concatenate
+    # them. Every boundary is a hard cut (including into/out of split-screen).
     # Any failure here falls back to a single Tier 1 centre crop of the span.
     try:
         parts: list[Path] = []
@@ -219,10 +135,7 @@ def run(job: dict, candidate_id: str, candidate: dict) -> str:
             part = out_dir / f"shot{i:02d}.mp4"
             _encode_shot(source, shot, part, has_audio)
             parts.append(part)
-        if any(s.mode == "split" for s in rplan.shots):
-            _join_xfade(parts, rplan.shots, out_path, has_audio, fps)
-        else:
-            _concat(parts, out_path)
+        _concat(parts, out_path)
         for part in parts:
             part.unlink(missing_ok=True)
     except Exception:
