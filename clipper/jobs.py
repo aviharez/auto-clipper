@@ -154,3 +154,35 @@ def update_candidate(cand_id: str, **fields):
         conn.execute(
             f"UPDATE candidates SET {cols} WHERE id = ?", (*fields.values(), cand_id)
         )
+
+
+def list_candidates_all(source_url: str = None, status: str = None) -> list:
+    with get_conn() as conn:
+        q = (
+            "SELECT c.*, j.source_url, j.created_at as job_created_at"
+            " FROM candidates c JOIN jobs j ON j.id = c.job_id"
+        )
+        params: list = []
+        where: list = []
+        if source_url:
+            where.append("j.source_url = ?")
+            params.append(source_url)
+        if status == "approved":
+            where.append("c.approved = 1")
+        elif status:
+            where.append("c.status = ?")
+            params.append(status)
+        if where:
+            q += " WHERE " + " AND ".join(where)
+        q += " ORDER BY j.created_at DESC, c.idx"
+        rows = conn.execute(q, params).fetchall()
+        return [dict(r) for r in rows]
+
+
+def list_unique_sources() -> list:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT j.source_url FROM candidates c"
+            " JOIN jobs j ON j.id = c.job_id ORDER BY j.source_url"
+        ).fetchall()
+        return [r[0] for r in rows]

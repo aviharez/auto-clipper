@@ -146,6 +146,39 @@ def schedule_recut(job_id: str, cand_id: str, new_start: float, new_end: float):
     _recut_executor.submit(_cut_and_assemble, job, cand_id)
 
 
+def _restyle(job: dict, cand_id: str, stage: str):
+    """Re-run caption and/or hook stages after a preset change."""
+    candidate = db.get_candidate(cand_id)
+    if not candidate:
+        return
+    try:
+        if stage == "caption":
+            words_path = JOBS_DIR / job["id"] / "clips" / cand_id / "words.json"
+            if words_path.exists():
+                db.update_candidate(cand_id, status="captioning", error=None)
+                caption.run(job, cand_id, candidate)
+            if candidate["hook_enabled"] and (candidate.get("hook_text") or "").strip():
+                db.update_candidate(cand_id, status="creating_hook")
+                hook.run(job, cand_id, candidate)
+        elif stage == "hook":
+            if candidate["hook_enabled"] and (candidate.get("hook_text") or "").strip():
+                db.update_candidate(cand_id, status="creating_hook", error=None)
+                hook.run(job, cand_id, candidate)
+
+        final_path = _assembler.assemble(cand_id, job, candidate)
+        db.update_candidate(cand_id, status="ready", output_path=final_path)
+    except Exception:
+        msg = traceback.format_exc()
+        log.error("Restyle %s for candidate %s failed:\n%s", stage, cand_id, msg)
+        db.update_candidate(cand_id, status="failed", error=msg)
+
+
+def schedule_restyle(job_id: str, cand_id: str, stage: str):
+    """Re-run caption or hook stage for one candidate after a preset change."""
+    job = db.get_job(job_id)
+    _recut_executor.submit(_restyle, job, cand_id, stage)
+
+
 # ── Background runner loop ────────────────────────────────────────────────────
 
 

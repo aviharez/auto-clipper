@@ -605,15 +605,140 @@ execute, supply this plan as context and request **only the current step**. Neve
 request "Iteration 2". Test the step's output before requesting the next — the same
 discipline applied when Iteration 1 was tested before proceeding.
 
-**Iteration 3 — second mode (only if pursued).**
-- `scoring/` signals (`llm.py` weighted 1.0 first, heuristics added/tuned after)
-- `candidates/auto.py` plugging into the proven convergence point
-- Iterate scoring weights in `config.py` against clips judged good/bad
+**Iteration 2.5 — refinements after first real use.**
+
+> Added after Iteration 2 shipped and was used in production for real clips. These are
+> not in the original plan — they are concrete improvements identified from actual use.
+> Same execution discipline as Iteration 2: ordered steps, one at a time, each tested
+> before the next. Build in this order — earliest steps are lowest risk and unblock
+> nothing downstream, so failures there don't poison later steps.
+
+- **Step 2.5.1 — Visual uplift + dark mode (executed together).** A frontend-only
+  pass that does TWO things in one step: (a) port the layout/UX direction from the
+  Claude-Design mockups already generated during Iteration 2 (sidebar with worker +
+  disk status, consistent status pills, inline mini progress bars on running jobs,
+  per-date grouped history grid with 9:16 cards, filter chips, near-duplicate
+  warning, clearer typographic hierarchy), and (b) apply a dark VSCode-like palette
+  (deep charcoal background, muted accents) on top of the new layout. Touches no
+  backend, no pipeline. Done first because it is isolated, immediately improves
+  daily comfort, and the new layout is where every subsequent Iteration-2.5 feature
+  attaches. **When porting, do not port blindly** — the existing mockups were
+  generated before Iteration 2.5 was scoped, so they do not anticipate the new
+  preset variety, transcript edit, hook upload, form input, or channel overlay.
+  Make space in the layout for these as you port: e.g. the clip review page needs
+  room for a richer preset gallery and an inline transcript editor; the job-submit
+  entry point becomes a form view, not just a file picker.
+
+  **How the mockup files are used (CRITICAL — read carefully).** The mockup
+  `.jsx` files (`job-list.jsx`, `clip-review.jsx`, `history.jsx`) are **visual
+  design references, NOT code to be pasted into the project**. They were generated
+  by Claude Design in a sandbox with helpers (`T` palette, `Icon` library,
+  `StatusPill`, `VideoPreview`, `MiniTile`, CSS classes like `row-btn`) that do
+  not exist in the production codebase. They also contain hardcoded mock data
+  (`CLIPS`, `HISTORY`) with no real backend wiring. Pasting them as-is will not
+  work and is not the goal.
+
+  Correct usage: keep them in a non-build directory (e.g. `/design-references/`)
+  or attach them only as input to the implementing agent. The agent must:
+  (1) read them as guidance for layout, hierarchy, component structure, and
+  spacing; (2) re-implement the equivalents using the project's actual UI
+  library/component patterns; (3) preserve all existing data-fetching, state
+  management, and event handlers from the current production frontend — the
+  mockups have none of these and the production code is the source of truth for
+  logic; (4) leave explicit room in the clip review page for three components
+  arriving in later 2.5 steps: inline transcript editor (2.5.6), hook video
+  upload selector (2.5.5), and channel logo + name overlay on the video preview
+  (2.5.3). After 2.5.1 ships, the reference files can be archived or deleted —
+  this plan document is the only durable source of truth.
+- **Step 2.5.2 — Expand caption & hook preset library.** Pure additions to
+  `caption_presets` and `hook_presets` in `config.py`. Critically, presets must include
+  **structural variants** beyond color (e.g. captions with **box-highlight** on the
+  active word using ASS `BorderStyle=3`, not just color swaps; hook presets with
+  colored backgrounds, gradient overlays, large-stroke type — not just white text).
+  Aim for 4–6 caption presets and 3–4 hook presets covering distinct visual moods.
+- **Step 2.5.3 — Channel branding overlay (YouTube logo + channel name).** New small
+  stage (or extension of `caption.py`) that overlays a bundled YouTube logo PNG +
+  channel-name text in the top-left of every clip. Logo file lives at
+  `assets/logos/youtube.png` (bundled, same pattern as fonts — ledger #18). Channel
+  name is a **batch-level** input field (one channel per batch), NOT per-clip. No UI
+  to upload a custom logo — out of scope; YouTube logo is the only brand mark.
+- **Step 2.5.4 — Form input as primary, YAML retained as option.** The dashboard's
+  submit-job entry point becomes a form: source URL field, channel name field, and a
+  dynamic list of clips (start, end, title, hook_text) with add/remove rows. **The
+  form generates the same internal structure the YAML produces** — the pipeline does
+  not care which input path was used. YAML upload remains available as a secondary
+  option (better for 10+ clip batches where typing in a form is slow). Do NOT remove
+  YAML.
+- **Step 2.5.5 — Upload custom hook video (Background B finalization).** This is
+  finishing what §7 already specified as Background B / external asset. Both the
+  input form and the per-clip detail view in the dashboard gain a hook source
+  selector: "generated (blur_self)" or "upload video". Uploaded hook video stored in
+  the job's working directory and referenced via the existing `hook_background`
+  field. No new field on `Candidate` needed — `hook_background` was reserved exactly
+  for this.
+- **Step 2.5.6 — Transcript correction (one-to-one word replacement only).** The
+  clip review page gains an editable transcript view. **Edits are strictly one-to-one
+  word replacement** (fixing typos / wrong-word recognitions). Adding or removing
+  words is NOT supported, because that would invalidate the
+  one-word-one-timing-slot assumption and break caption sync. UI must enforce this:
+  each word is its own editable cell, no free-form text area that allows
+  inserting/deleting words. The corrected transcript is stored as a **user-edited
+  version SEPARATE from the original machine transcript** (both retained in the job
+  record). `caption.py` reads the user-edited version; Layer 1 boundary suggestion
+  can read either, but the original is the source of truth for re-running anything
+  that depends on raw machine output. Regenerate after edit re-runs ONLY
+  `caption.py` for that clip — cheap, per ledger #1.
+
+**Locked rationale (Iteration 2.5 ordering).** Steps 2.5.1–2.5.3 are pure additions
+with no architectural impact and ship first to deliver immediate value. Step 2.5.4
+changes the input UX but not the internal structure (form → same shape as YAML →
+unchanged pipeline). Step 2.5.5 completes a feature already designed in §7. Step
+2.5.6 is last because it is the only step that changes the data model (transcript
+gains an edited version distinct from the original); doing it last means everything
+before it remains stable while this is added.
+
+**Locked rationale (visual uplift and dark mode are one step, not two).** Splitting
+them would mean porting the new layout twice (once to a neutral palette, once again
+to dark). The mockups exist; the palette change is mechanical on top of the new
+layout. Doing both in one pass is the efficient path for a solo builder. The earlier
+instinct to split (build layout first, palette second) is conservative practice for
+larger teams; it is overkill here.
+
+**Locked rationale (transcript edit is one-to-one only).** AssemblyAI returns
+`[word, start_ms, end_ms]`. Replacing a word in place keeps the timing slot intact
+and caption sync remains valid. Adding/removing words breaks the slot count and
+desyncs caption highlighting. Restricting to one-to-one is not a limitation to lift
+later — it is a deliberate scope that preserves caption quality. If richer edits are
+ever needed, the right answer is to re-run AssemblyAI for that span, not to fake
+timings.
+
+**Locked rationale (machine transcript retained alongside edits).** User edits must
+win over machine output for rendering (re-transcribing would overwrite user
+corrections). But the original machine transcript must remain stored, so
+re-running anything dependent on raw machine output (boundary suggestion, future
+features) does not lose ground truth. Transcript is now a two-version document, not
+a single mutable field.
+
+**Iteration 3 — SKIPPED by user decision (no LLM budget).**
+
+> User chose not to build auto mode due to ongoing LLM API cost. This is an
+> anticipated and supported outcome: §1 always marked auto mode as "only if pursued,"
+> and the architecture was deliberately built so that auto mode plugs into an existing
+> seam (`candidates/auto.py` + `scoring/`) without affecting any other stage. The
+> manual-mode tool is fully functional and useful without it. The `scoring/` seam and
+> the `CandidateSource` interface remain in place — auto mode can be added later if
+> circumstances change, with no rework required of anything currently built.
+
+(Original Iteration 3 scope for reference, in case it is ever revisited: `scoring/`
+signals with `llm.py` weighted 1.0 first then heuristics tuned; `candidates/auto.py`
+plugged into the convergence point; iterate weights in `config.py` against clips
+judged good/bad.)
 
 **Iteration 4 — ranked compilation (future extension, only if pursued).**
 - `assembly/ranked.py`: order styled segments by `Candidate.rank`, stitch into one
   video with inter-segment number cards
-- A way to populate `rank` (manual: a `rank:` key in the YAML; auto: LLM assigns it)
+- A way to populate `rank` (manual: a `rank:` key in the YAML / form; auto: LLM
+  assigns it — but auto is currently skipped)
 - Plugs into the existing assembly seam; touches no upstream stage
 
 **Locked rationale (order de-risks itself).** Building the reliable deterministic half
@@ -654,6 +779,16 @@ must not compete with proving the core loop.
 | 24 | Split-screen only on genuine alternation, never on doubt | Uncertainty → stay on last speaker, not flicker-split |
 | 25 | Tier 2b accuracy on this CPU costs large process time | Accepted (low volume, background); don't silently downgrade |
 | 26 | Iteration 2 executed as ordered steps, each tested | Stacking 4 heavy components blind = undiagnosable failure |
+| 27 | Transcript edit is strictly word-by-word, no insert/delete | Preserves AssemblyAI's one-word-one-timing-slot; sync stays valid |
+| 28 | Machine transcript and user-edited transcript both retained | User edits win for render; original preserved for re-runs |
+| 29 | Form input is primary; YAML retained as secondary | Form for ergonomics, YAML for batches > 10 clips; same internal shape |
+| 30 | YouTube logo is bundled, no custom-logo upload UI | One brand mark; consistent with bundled-fonts pattern (#18) |
+| 31 | Channel name is batch-level, not per-clip | One channel per batch matches actual use; simplifies overlay |
+| 32 | Presets must vary structure, not only color | Box-highlight via ASS `BorderStyle=3`; visually distinct moods |
+| 33 | Iteration 3 (auto mode) skipped by user; seam preserved | Architecture supports skipping; auto can be added later if needed |
+| 34 | Step 2.5.1 combines visual uplift + dark mode in one pass | Splitting means porting layout twice; mockups already exist |
+| 35 | Mockup porting is layout-aware, not literal | Mockups predate 2.5 scope; must leave room for new features as ported |
+| 36 | Design mockup `.jsx` files are reference, not code | Have sandbox helpers + mock data; production frontend remains source of truth for logic |
 
 ---
 

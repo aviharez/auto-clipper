@@ -15,7 +15,7 @@ from pydantic import BaseModel
 
 import clipper.jobs as db
 from clipper import runner
-from clipper.config import JOBS_DIR
+from clipper.config import CAPTION_PRESETS, DEFAULT_CAPTION_PRESET, JOBS_DIR
 from clipper.stages import publish as publish_stage
 
 log = logging.getLogger(__name__)
@@ -169,6 +169,89 @@ def api_get_candidate(cand_id: str):
     if not candidate:
         raise HTTPException(404, "Candidate not found")
     return candidate
+
+
+@app.get("/api/candidates/{cand_id}/boundary-suggestion")
+def api_boundary_suggestion(cand_id: str):
+    candidate = db.get_candidate(cand_id)
+    if not candidate:
+        raise HTTPException(404, "Candidate not found")
+    from clipper.stages.boundary import suggest
+    return suggest(cand_id, candidate, JOBS_DIR)
+
+
+class StyleUpdate(BaseModel):
+    caption_preset: Optional[str] = None
+    hook_preset: Optional[str] = None
+
+
+@app.put("/api/candidates/{cand_id}/style")
+def api_update_style(cand_id: str, body: StyleUpdate):
+    candidate = db.get_candidate(cand_id)
+    if not candidate:
+        raise HTTPException(404, "Candidate not found")
+
+    updates = {}
+    changed_stage = None
+
+    if body.caption_preset is not None:
+        if body.caption_preset not in CAPTION_PRESETS:
+            raise HTTPException(400, f"Unknown caption preset: {body.caption_preset!r}")
+        updates["caption_preset"] = body.caption_preset
+        changed_stage = "caption"
+
+    if body.hook_preset is not None:
+        if body.hook_preset not in CAPTION_PRESETS:
+            raise HTTPException(400, f"Unknown hook preset: {body.hook_preset!r}")
+        updates["hook_preset"] = body.hook_preset
+        if changed_stage is None:
+            changed_stage = "hook"
+        # if caption also changed, "caption" stage already re-runs hook
+
+    if updates:
+        db.update_candidate(cand_id, **updates)
+
+    return {"status": "updated", **updates}
+
+
+@app.post("/api/candidates/{cand_id}/restyle")
+def api_restyle(cand_id: str):
+    candidate = db.get_candidate(cand_id)
+    if not candidate:
+        raise HTTPException(404, "Candidate not found")
+    if candidate["status"] != "ready":
+        raise HTTPException(400, f"Clip is not ready (status: {candidate['status']})")
+    runner.schedule_restyle(candidate["job_id"], cand_id, "caption")
+    return {"status": "restyle_queued"}
+
+
+# ── API: Presets ──────────────────────────────────────────────────────────────
+
+
+@app.get("/api/presets")
+def api_get_presets():
+    return {
+        "caption": {
+            name: {
+                "label": name.replace("_", " ").title(),
+                "is_default": name == DEFAULT_CAPTION_PRESET,
+            }
+            for name in CAPTION_PRESETS
+        }
+    }
+
+
+# ── API: History ──────────────────────────────────────────────────────────────
+
+
+@app.get("/api/history")
+def api_history(source_url: Optional[str] = None, status: Optional[str] = None):
+    return db.list_candidates_all(source_url=source_url, status=status)
+
+
+@app.get("/api/history/sources")
+def api_history_sources():
+    return db.list_unique_sources()
 
 
 # ── API: Publish ──────────────────────────────────────────────────────────────
