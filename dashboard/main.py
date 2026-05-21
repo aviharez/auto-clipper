@@ -15,7 +15,7 @@ from pydantic import BaseModel
 
 import clipper.jobs as db
 from clipper import runner
-from clipper.config import CAPTION_PRESETS, DEFAULT_CAPTION_PRESET, JOBS_DIR
+from clipper.config import CAPTION_PRESETS, DEFAULT_CAPTION_PRESET, HOOK_PRESETS, DEFAULT_HOOK_PRESET, JOBS_DIR
 from clipper.stages import publish as publish_stage
 
 log = logging.getLogger(__name__)
@@ -88,6 +88,8 @@ async def api_create_job(yaml_file: UploadFile = File(...)):
     if not source_url:
         raise HTTPException(400, "YAML must contain a 'source' key with the YouTube URL")
 
+    channel_name = (spec.get("channel_name") or "").strip() or None
+
     # Save the YAML to a temp location; will be moved after job_id is known
     import uuid, os
     tmp_id = str(uuid.uuid4())
@@ -96,7 +98,7 @@ async def api_create_job(yaml_file: UploadFile = File(...)):
     tmp_yaml = DATA_DIR / f"tmp_{tmp_id}.yaml"
     tmp_yaml.write_bytes(content)
 
-    job_id = db.create_job(source_url, str(tmp_yaml))
+    job_id = db.create_job(source_url, str(tmp_yaml), channel_name=channel_name)
 
     # Move YAML into the job directory
     final_yaml = JOBS_DIR / job_id / "input.yaml"
@@ -201,7 +203,7 @@ def api_update_style(cand_id: str, body: StyleUpdate):
         changed_stage = "caption"
 
     if body.hook_preset is not None:
-        if body.hook_preset not in CAPTION_PRESETS:
+        if body.hook_preset not in HOOK_PRESETS:
             raise HTTPException(400, f"Unknown hook preset: {body.hook_preset!r}")
         updates["hook_preset"] = body.hook_preset
         if changed_stage is None:
@@ -237,7 +239,14 @@ def api_get_presets():
                 "is_default": name == DEFAULT_CAPTION_PRESET,
             }
             for name in CAPTION_PRESETS
-        }
+        },
+        "hook": {
+            name: {
+                "label": name.replace("_", " ").title(),
+                "is_default": name == DEFAULT_HOOK_PRESET,
+            }
+            for name in HOOK_PRESETS
+        },
     }
 
 

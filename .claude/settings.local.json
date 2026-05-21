@@ -52,7 +52,10 @@
       "Bash(rm -rf /tmp/ff2)",
       "Bash(mkdir -p /tmp/ff2)",
       "Bash(ffmpeg -y -loglevel error -ss 4.0 -i \"data/jobs/b6e9beb5-6335-48fb-a3a5-db5e0fef3869/clips/a0edeb64-ee6b-40b7-bf4a-367f502d46ab/final.mp4\" -t 3.0 -vf \"fps=25,scale=160:-2\" \"/tmp/ff2/f%03d.jpg\")",
-      "Bash(uvicorn dashboard.main:app --port 8000)"
+      "Bash(uvicorn dashboard.main:app --port 8000)",
+      "Bash(rtk read *)",
+      "Bash(rtk grep *)",
+      "Bash(python3 *)"
     ]
   }
 }

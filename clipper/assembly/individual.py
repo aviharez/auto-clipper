@@ -12,7 +12,7 @@ class IndividualAssembler(Assembler):
         clip_dir = JOBS_DIR / job["id"] / "clips" / candidate_id
         final = clip_dir / "final.mp4"
 
-        for name in ("hooked.mp4", "captioned.mp4", "raw.mp4"):
+        for name in ("branded.mp4", "hooked.mp4", "captioned.mp4", "raw.mp4"):
             src = clip_dir / name
             if src.exists():
                 break

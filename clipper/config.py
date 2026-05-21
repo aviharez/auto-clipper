@@ -7,6 +7,17 @@ DB_PATH = DATA_DIR / "jobs.db"
 JOBS_DIR = DATA_DIR / "jobs"
 ASSETS_DIR = BASE_DIR / "assets"
 FONTS_DIR = ASSETS_DIR / "fonts"
+LOGOS_DIR = ASSETS_DIR / "logos"
+YOUTUBE_LOGO_PATH = LOGOS_DIR / "youtube.png"
+# Logo natural dimensions (180×127) — used in branding.py to compute scaled width.
+YOUTUBE_LOGO_ASPECT = 180 / 127  # width / height
+
+# Branding overlay — logo + channel name in top-left corner of every clip.
+BRANDING_LOGO_HEIGHT_FRAC = 0.019   # logo height as fraction of CLIP_HEIGHT (~65px at 1920)
+BRANDING_MARGIN_PX = 42             # pixels from top-left edge
+BRANDING_FONT_FILE = str(FONTS_DIR / "Montserrat-Bold.ttf")
+BRANDING_FONT_FAMILY = "Montserrat"
+BRANDING_FONT_SIZE_FRAC = 0.019     # channel name font size as fraction of CLIP_HEIGHT (~36px)
 
 YOUTUBE_CREDENTIALS_FILE = BASE_DIR / "credentials" / "client_secret.json"
 YOUTUBE_TOKEN_FILE = BASE_DIR / "credentials" / "token.json"
@@ -27,7 +38,7 @@ CAPTION_PRESETS = {
         "words_on_screen": 3,
         "font_file": str(FONTS_DIR / "Montserrat-Bold.ttf"),
         "font_family": "Montserrat",
-        "font_size_pct": 9,
+        "font_size_pct": 7,
         "color_normal": "#FFFFFF",
         "color_active": "#FFE000",
         "outline_color": "#000000",
@@ -40,7 +51,7 @@ CAPTION_PRESETS = {
         "words_on_screen": 2,
         "font_file": str(FONTS_DIR / "Inter-28pt-Bold.ttf"),
         "font_family": "Inter 28pt",
-        "font_size_pct": 8,
+        "font_size_pct": 6,
         "color_normal": "#FFFFFF",
         "color_active": "#FFFFFF",
         "outline_color": "#000000",
@@ -49,9 +60,109 @@ CAPTION_PRESETS = {
         "position_from_bottom_pct": 28,
         "pop_animation": False,
     },
+    # BorderStyle=3: opaque box behind each word (one word at a time).
+    # outline_width controls box padding rather than stroke width in this mode.
+    "box_highlight": {
+        "words_on_screen": 1,
+        "font_file": str(FONTS_DIR / "Montserrat-Bold.ttf"),
+        "font_family": "Montserrat",
+        "font_size_pct": 8,
+        "color_normal": "#000000",
+        "color_active": "#000000",
+        "outline_color": "#000000",
+        "outline_width": 12,
+        "shadow": False,
+        "border_style": 3,
+        "box_color": "#FFE000",
+        "position_from_bottom_pct": 28,
+        "pop_animation": False,
+    },
+    "neon_green": {
+        "words_on_screen": 3,
+        "font_file": str(FONTS_DIR / "Montserrat-Bold.ttf"),
+        "font_family": "Montserrat",
+        "font_size_pct": 7,
+        "color_normal": "#FFFFFF",
+        "color_active": "#00FF7F",
+        "outline_color": "#000000",
+        "outline_width": 6,
+        "shadow": True,
+        "position_from_bottom_pct": 30,
+        "pop_animation": True,
+    },
+    "fire_orange": {
+        "words_on_screen": 2,
+        "font_file": str(FONTS_DIR / "Montserrat-Bold.ttf"),
+        "font_family": "Montserrat",
+        "font_size_pct": 7,
+        "color_normal": "#FFFFFF",
+        "color_active": "#FF4500",
+        "outline_color": "#000000",
+        "outline_width": 8,
+        "shadow": True,
+        "position_from_bottom_pct": 30,
+        "pop_animation": True,
+    },
+    "vibrant_cyan": {
+        "words_on_screen": 3,
+        "font_file": str(FONTS_DIR / "Inter-28pt-Bold.ttf"),
+        "font_family": "Inter 28pt",
+        "font_size_pct": 6,
+        "color_normal": "#FFFFFF",
+        "color_active": "#00CFFF",
+        "outline_color": "#000000",
+        "outline_width": 5,
+        "shadow": True,
+        "position_from_bottom_pct": 25,
+        "pop_animation": False,
+    },
 }
 
 DEFAULT_CAPTION_PRESET = "bold_yellow"
+
+# Hook presets — control the blurred teaser segment's text style and bg darkness.
+# bg_brightness: ffmpeg eq brightness adjustment applied to the blurred background
+#   (range roughly -1.0 … 0.0; more negative = darker).
+HOOK_PRESETS = {
+    "blur_dark": {
+        "font_family": "Montserrat",
+        "font_file": str(FONTS_DIR / "Montserrat-Bold.ttf"),
+        "font_size_pct": 7,
+        "text_color": "#FFFFFF",
+        "outline_width": 6,
+        "shadow": True,
+        "bg_brightness": -0.35,
+    },
+    "bold_punch": {
+        "font_family": "Montserrat",
+        "font_file": str(FONTS_DIR / "Montserrat-Bold.ttf"),
+        "font_size_pct": 9,
+        "text_color": "#FFE000",
+        "outline_width": 8,
+        "shadow": True,
+        "bg_brightness": -0.50,
+    },
+    "dark_minimal": {
+        "font_family": "Inter 28pt",
+        "font_file": str(FONTS_DIR / "Inter-28pt-Bold.ttf"),
+        "font_size_pct": 6,
+        "text_color": "#FFFFFF",
+        "outline_width": 2,
+        "shadow": False,
+        "bg_brightness": -0.60,
+    },
+    "high_contrast": {
+        "font_family": "Montserrat",
+        "font_file": str(FONTS_DIR / "Montserrat-Bold.ttf"),
+        "font_size_pct": 8,
+        "text_color": "#FFFFFF",
+        "outline_width": 12,
+        "shadow": False,
+        "bg_brightness": -0.20,
+    },
+}
+
+DEFAULT_HOOK_PRESET = "blur_dark"
 
 DEFAULT_HOOK_ENABLED = True
 DEFAULT_HOOK_DURATION = 3

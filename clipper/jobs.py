@@ -24,6 +24,16 @@ def get_conn() -> sqlite3.Connection:
     return conn
 
 
+def _migrate(conn: sqlite3.Connection):
+    """Add columns that were introduced after the initial schema without dropping data."""
+    new_cols = [("jobs", "channel_name", "TEXT")]
+    for table, col, col_type in new_cols:
+        try:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")
+        except sqlite3.OperationalError:
+            pass  # column already exists
+
+
 def init_db():
     _ensure_dirs()
     with get_conn() as conn:
@@ -37,8 +47,10 @@ def init_db():
                 updated_at  TEXT NOT NULL,
                 yaml_path   TEXT,
                 source_video_path TEXT,
-                metadata_json     TEXT
+                metadata_json     TEXT,
+                channel_name      TEXT
             );
+
             CREATE TABLE IF NOT EXISTS candidates (
                 id              TEXT PRIMARY KEY,
                 job_id          TEXT NOT NULL,
@@ -62,19 +74,20 @@ def init_db():
                 FOREIGN KEY (job_id) REFERENCES jobs(id)
             );
         """)
+        _migrate(conn)
 
 
 # ── Jobs ────────────────────────────────────────────────────────────────────
 
 
-def create_job(source_url: str, yaml_path: str) -> str:
+def create_job(source_url: str, yaml_path: str, channel_name: str = None) -> str:
     job_id = str(uuid.uuid4())
     now = _now()
     with get_conn() as conn:
         conn.execute(
-            "INSERT INTO jobs (id, source_url, status, created_at, updated_at, yaml_path)"
-            " VALUES (?, ?, 'pending', ?, ?, ?)",
-            (job_id, source_url, now, now, yaml_path),
+            "INSERT INTO jobs (id, source_url, status, created_at, updated_at, yaml_path, channel_name)"
+            " VALUES (?, ?, 'pending', ?, ?, ?, ?)",
+            (job_id, source_url, now, now, yaml_path, channel_name or None),
         )
     job_dir = JOBS_DIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)

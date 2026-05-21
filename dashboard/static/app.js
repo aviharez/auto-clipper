@@ -405,8 +405,9 @@ function renderClipCard(c, forceOpen = false) {
   const hasVideo     = c.status === 'ready' || c.status === 'approved' || c.status === 'uploaded';
 
   const cp       = _presets?.caption || {};
+  const hp       = _presets?.hook || {};
   const cpKeys   = Object.keys(cp);
-  const effectiveHookPreset = c.hook_preset || c.caption_preset;
+  const effectiveHookPreset = c.hook_preset || null;
 
   const presetBlock = cpKeys.length ? `
     <div class="preset-row">
@@ -422,7 +423,7 @@ function renderClipCard(c, forceOpen = false) {
         ? `<div class="preset-field">
              <label class="preset-label">Hook style</label>
              <select class="preset-select" data-preset-type="hook" data-cid="${c.id}">
-               ${_presetOptions(effectiveHookPreset, cp)}
+               ${_presetOptions(effectiveHookPreset, hp)}
              </select>
            </div>`
         : ''}
@@ -548,7 +549,7 @@ let _presets = null;
 
 async function loadPresets() {
   if (_presets) return;
-  try { _presets = await api('GET', '/presets'); } catch { _presets = { caption: {} }; }
+  try { _presets = await api('GET', '/presets'); } catch { _presets = { caption: {}, hook: {} }; }
 }
 
 function _presetOptions(selected, presets) {

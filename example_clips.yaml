@@ -1,4 +1,5 @@
 source: https://www.youtube.com/watch?v=Nhj5PiDEqHU
+channel_name: "SNZ Clips"   # batch-level branding; omit to skip overlay
 default_captions: true
 
 hook:

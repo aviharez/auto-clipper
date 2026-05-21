@@ -17,7 +17,7 @@ import clipper.jobs as db
 from clipper.assembly.individual import IndividualAssembler
 from clipper.candidates.manual import ManualCandidateSource
 from clipper.config import JOBS_DIR
-from clipper.stages import caption, cut, hook, ingest
+from clipper.stages import branding, caption, cut, hook, ingest
 from clipper.transcribe.api import AssemblyAITranscriber
 
 log = logging.getLogger(__name__)
@@ -112,6 +112,8 @@ def _cut_and_assemble(job: dict, cand_id: str):
             db.update_candidate(cand_id, status="creating_hook")
             hook.run(job, cand_id, candidate)
 
+        branding.run(job, cand_id, candidate)
+
         final_path = _assembler.assemble(cand_id, job, candidate)
         db.update_candidate(cand_id, status="ready", output_path=final_path)
     except Exception:
@@ -164,6 +166,8 @@ def _restyle(job: dict, cand_id: str, stage: str):
             if candidate["hook_enabled"] and (candidate.get("hook_text") or "").strip():
                 db.update_candidate(cand_id, status="creating_hook", error=None)
                 hook.run(job, cand_id, candidate)
+
+        branding.run(job, cand_id, candidate)
 
         final_path = _assembler.assemble(cand_id, job, candidate)
         db.update_candidate(cand_id, status="ready", output_path=final_path)

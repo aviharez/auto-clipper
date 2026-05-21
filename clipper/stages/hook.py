@@ -15,6 +15,7 @@ from typing import Optional
 from clipper.config import (
     BASE_DIR,
     CAPTION_PRESETS, DEFAULT_CAPTION_PRESET,
+    HOOK_PRESETS, DEFAULT_HOOK_PRESET,
     CLIP_WIDTH, CLIP_HEIGHT,
     VIDEO_CRF, VIDEO_PRESET, AUDIO_BITRATE,
     DEFAULT_HOOK_DURATION,
@@ -40,8 +41,8 @@ def run(job: dict, cand_id: str, candidate: dict) -> Optional[str]:
     # The main content appended after the hook is captioned.mp4 if it exists.
     main_clip = captioned if captioned.exists() else raw
 
-    preset_name = candidate.get("hook_preset") or candidate.get("caption_preset") or DEFAULT_CAPTION_PRESET
-    preset = CAPTION_PRESETS.get(preset_name) or CAPTION_PRESETS[DEFAULT_CAPTION_PRESET]
+    hook_preset_name = candidate.get("hook_preset") or DEFAULT_HOOK_PRESET
+    preset = HOOK_PRESETS.get(hook_preset_name) or HOOK_PRESETS[DEFAULT_HOOK_PRESET]
 
     _create_hook_segment(
         src=str(raw),
@@ -66,12 +67,21 @@ def _format_ass_time(seconds: float) -> str:
     return f"{h}:{m:02d}:{int(s):02d}.{cs:02d}"
 
 
+def _rgb_to_ass(hex_color: str) -> str:
+    r = int(hex_color[1:3], 16)
+    g = int(hex_color[3:5], 16)
+    b = int(hex_color[5:7], 16)
+    return f"&H00{b:02X}{g:02X}{r:02X}&"
+
+
 def _build_hook_ass(hook_text: str, duration: float, preset: dict) -> str:
     """Generate a simple centred ASS file that shows hook_text for `duration` seconds."""
-    font_size   = int(7 / 100 * CLIP_HEIGHT)   # 7 % ≈ 134 px — headline scale
+    font_size_pct = preset.get("font_size_pct", 7)
+    font_size   = int(font_size_pct / 100 * CLIP_HEIGHT)
     font_family = preset.get("font_family", "Arial")
     outline_w   = preset.get("outline_width", 6)
     shadow      = 2 if preset.get("shadow", True) else 0
+    text_color  = _rgb_to_ass(preset.get("text_color", "#FFFFFF"))
 
     t_end = _format_ass_time(duration)
 
@@ -90,7 +100,7 @@ def _build_hook_ass(hook_text: str, duration: float, preset: dict) -> str:
         # Alignment 5 = centre both axes; large L/R margins so long text wraps nicely.
         (
             f"Style: Default,{font_family},{font_size},"
-            f"&H00FFFFFF&,&H000000FF&,&H00000000&,&H00000000&,"
+            f"{text_color},&H000000FF&,&H00000000&,&H00000000&,"
             f"-1,0,0,0,100,100,0,0,1,{outline_w},{shadow},5,80,80,80,1"
         ),
         "",
@@ -114,11 +124,12 @@ def _create_hook_segment(
 
     ass_rel   = ass_path.relative_to(BASE_DIR).as_posix()
     fonts_rel = FONTS_DIR.relative_to(BASE_DIR).as_posix()
+    brightness = preset.get("bg_brightness", -0.35)
 
     vf = (
         f"trim=0:{duration},setpts=PTS-STARTPTS,"
         f"boxblur=luma_radius=25:luma_power=3:chroma_radius=20:chroma_power=3,"
-        f"eq=brightness=-0.35,"
+        f"eq=brightness={brightness},"
         f"setsar=1,"   # normalise SAR so concat with main clip is seamless
         f"ass={ass_rel}:fontsdir={fonts_rel}"
     )
