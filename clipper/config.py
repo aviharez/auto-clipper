@@ -160,6 +160,52 @@ HOOK_PRESETS = {
         "shadow": False,
         "bg_brightness": -0.20,
     },
+    # TikTok-style: text in lower half, bold all-caps.
+    # Mark highlighted words/phrases in hook_text with [brackets]: "PERCAYA [NGGAK]?"
+    # position="lower" anchors text ~20% from bottom (above UI chrome).
+    # Zero brackets is valid — plain styled text, no highlight applied.
+    "tiktok_green": {
+        "font_family": "Montserrat",
+        "font_file": str(FONTS_DIR / "Montserrat-Bold.ttf"),
+        "font_size_pct": 5,
+        "text_color": "#FFFFFF",
+        "highlight_color": "#00FF7F",
+        "outline_width": 6,
+        "shadow": False,
+        "bg_brightness": -0.40,
+        "position": "lower",
+        "text_transform": "upper",
+        "margin_h": 20,
+    },
+    "tiktok_yellow": {
+        "font_family": "Montserrat",
+        "font_file": str(FONTS_DIR / "Montserrat-Bold.ttf"),
+        "font_size_pct": 5,
+        "text_color": "#FFFFFF",
+        "highlight_color": "#FFE000",
+        "outline_width": 6,
+        "shadow": False,
+        "bg_brightness": -0.40,
+        "position": "lower",
+        "text_transform": "upper",
+        "margin_h": 20,
+    },
+    # tiktok_box: entire line on a white box (BorderStyle=3), dark text.
+    # No per-keyword syntax needed — the box frames the whole hook line.
+    "tiktok_box": {
+        "font_family": "Montserrat",
+        "font_file": str(FONTS_DIR / "Montserrat-Bold.ttf"),
+        "font_size_pct": 5,
+        "text_color": "#111111",
+        "outline_width": 14,
+        "shadow": False,
+        "border_style": 3,
+        "box_color": "#FFFFFF",
+        "bg_brightness": -0.45,
+        "position": "lower",
+        "text_transform": "upper",
+        "margin_h": 20,
+    },
 }
 
 DEFAULT_HOOK_PRESET = "blur_dark"

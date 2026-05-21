@@ -146,6 +146,20 @@ async function showJobList() {
               <span>Default hook on</span>
             </label>
           </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 10px">
+            <div class="form-field">
+              <label class="form-label" for="form-caption-preset">Caption style</label>
+              <select class="form-input" id="form-caption-preset">
+                <option value="">Config default</option>
+              </select>
+            </div>
+            <div class="form-field">
+              <label class="form-label" for="form-hook-preset">Hook style</label>
+              <select class="form-input" id="form-hook-preset">
+                <option value="">Config default</option>
+              </select>
+            </div>
+          </div>
         </div>
         <div class="form-clips-header">
           <span class="form-clips-title">Clips</span>
@@ -244,7 +258,7 @@ function escAttr(s) {
   return (s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;');
 }
 
-function setupNewJobPanel() {
+async function setupNewJobPanel() {
   $('#tab-form').onclick = () => {
     $('#tab-form').classList.add('active');
     $('#tab-yaml').classList.remove('active');
@@ -261,10 +275,18 @@ function setupNewJobPanel() {
   $('#btn-cancel-form').onclick  = () => { $('#new-job-panel').style.display = 'none'; };
   $('#btn-cancel-upload').onclick = () => { $('#new-job-panel').style.display = 'none'; };
   $('#btn-add-clip').onclick      = () => {
-    _formClips.push({ start: '', end: '', title: '', hook_text: '', hook_background: 'blur_self' });
+    _formClips.push({ start: '', end: '', title: '', hook_text: '', hook_background: 'blur_self', caption_preset: '', hook_preset: '' });
     renderFormClips();
   };
   $('#btn-form-submit').onclick = submitForm;
+
+  await loadPresets();
+  const cp = _presets?.caption || {};
+  const hp = _presets?.hook    || {};
+  const captionEl = $('#form-caption-preset');
+  if (captionEl) captionEl.innerHTML = _formPresetOptions('', cp, 'Config default');
+  const hookEl = $('#form-hook-preset');
+  if (hookEl) hookEl.innerHTML = _formPresetOptions('', hp, 'Config default');
 
   renderFormClips();
   setupUpload();
@@ -308,7 +330,21 @@ function renderFormClips() {
           <label class="form-label">Hook text</label>
           <input class="form-input" type="text"
                  data-clip-idx="${i}" data-clip-field="hook_text"
-                 value="${escAttr(clip.hook_text)}" placeholder="Optional hook line" />
+                 value="${escAttr(clip.hook_text)}" placeholder="Optional — use [word] to highlight" />
+        </div>
+        <div class="form-field form-field-span" style="display:grid;grid-template-columns:1fr 1fr;gap:6px 10px">
+          <div class="form-field">
+            <label class="form-label">Caption style</label>
+            <select class="form-input" data-clip-idx="${i}" data-clip-field="caption_preset">
+              ${_formPresetOptions(clip.caption_preset, _presets?.caption || {}, 'Batch default')}
+            </select>
+          </div>
+          <div class="form-field">
+            <label class="form-label">Hook style</label>
+            <select class="form-input" data-clip-idx="${i}" data-clip-field="hook_preset">
+              ${_formPresetOptions(clip.hook_preset, _presets?.hook || {}, 'Batch default')}
+            </select>
+          </div>
         </div>
         <div class="form-field">
           <label class="form-label">Hook source</label>
@@ -329,16 +365,18 @@ function renderFormClips() {
   `).join('');
 
   $$('[data-clip-idx]', container).forEach(inp => {
-    if (inp.dataset.clipField === 'hook_background') {
+    const idx = () => +inp.dataset.clipIdx;
+    if (inp.tagName === 'SELECT') {
       inp.onchange = () => {
-        const idx = +inp.dataset.clipIdx;
-        _formClips[idx].hook_background = inp.value;
-        const fileRow = document.getElementById(`form-hook-file-row-${idx}`);
-        if (fileRow) fileRow.style.display = inp.value === 'external' ? '' : 'none';
+        _formClips[idx()][inp.dataset.clipField] = inp.value;
+        if (inp.dataset.clipField === 'hook_background') {
+          const fileRow = document.getElementById(`form-hook-file-row-${idx()}`);
+          if (fileRow) fileRow.style.display = inp.value === 'external' ? '' : 'none';
+        }
       };
     } else {
       inp.oninput = () => {
-        _formClips[+inp.dataset.clipIdx][inp.dataset.clipField] = inp.value;
+        _formClips[idx()][inp.dataset.clipField] = inp.value;
       };
     }
   });
@@ -390,17 +428,24 @@ async function submitForm() {
   btn.disabled = true;
   btn.textContent = 'Creating…';
 
+  const defaultCaptionPreset = $('#form-caption-preset')?.value || null;
+  const defaultHookPreset    = $('#form-hook-preset')?.value    || null;
+
   try {
     const { job_id } = await api('POST', '/jobs/from-form', {
-      source_url:       sourceUrl,
-      channel_name:     channelName || null,
-      default_captions: defCaptions,
-      hook_enabled:     hookEnabled,
+      source_url:             sourceUrl,
+      channel_name:           channelName || null,
+      default_captions:       defCaptions,
+      hook_enabled:           hookEnabled,
+      default_caption_preset: defaultCaptionPreset,
+      default_hook_preset:    defaultHookPreset,
       clips: _formClips.map(c => ({
-        start:     c.start.trim(),
-        end:       c.end.trim(),
-        title:     c.title.trim(),
-        hook_text: c.hook_text?.trim() || null,
+        start:          c.start.trim(),
+        end:            c.end.trim(),
+        title:          c.title.trim(),
+        hook_text:      c.hook_text?.trim() || null,
+        caption_preset: c.caption_preset || null,
+        hook_preset:    c.hook_preset    || null,
       })),
     });
 
@@ -969,6 +1014,14 @@ async function loadPresets() {
 function _presetOptions(selected, presets) {
   return Object.entries(presets).map(([k, p]) =>
     `<option value="${k}"${(selected ? selected === k : p.is_default) ? ' selected' : ''}>${p.label}</option>`
+  ).join('');
+}
+
+// For form inputs: first option is "use default", then all presets.
+function _formPresetOptions(selected, presets, defaultLabel) {
+  const base = `<option value=""${!selected ? ' selected' : ''}>${defaultLabel}</option>`;
+  return base + Object.entries(presets || {}).map(([k, p]) =>
+    `<option value="${k}"${selected === k ? ' selected' : ''}>${p.label}</option>`
   ).join('');
 }
 

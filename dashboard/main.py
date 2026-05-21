@@ -82,6 +82,8 @@ class ClipFormItem(BaseModel):
     hook_text: Optional[str] = None
     hook_enabled: Optional[bool] = None
     needs_caption: Optional[bool] = None
+    caption_preset: Optional[str] = None
+    hook_preset: Optional[str] = None
 
 
 class JobFormBody(BaseModel):
@@ -90,6 +92,8 @@ class JobFormBody(BaseModel):
     default_captions: bool = True
     hook_enabled: bool = True
     hook_duration: int = 3
+    default_caption_preset: Optional[str] = None
+    default_hook_preset: Optional[str] = None
     clips: list[ClipFormItem]
 
 
@@ -100,6 +104,11 @@ async def api_create_job_from_form(body: JobFormBody):
 
     if not body.clips:
         raise HTTPException(400, "At least one clip is required")
+
+    if body.default_caption_preset and body.default_caption_preset not in CAPTION_PRESETS:
+        raise HTTPException(400, f"Unknown caption preset: {body.default_caption_preset!r}")
+    if body.default_hook_preset and body.default_hook_preset not in HOOK_PRESETS:
+        raise HTTPException(400, f"Unknown hook preset: {body.default_hook_preset!r}")
 
     spec: dict = {
         "source": body.source_url,
@@ -122,6 +131,13 @@ async def api_create_job_from_form(body: JobFormBody):
             c["hook"] = clip.hook_enabled
         if clip.needs_caption is not None and clip.needs_caption != body.default_captions:
             c["needs_caption"] = clip.needs_caption
+        # Per-clip preset wins; fall back to batch default if set.
+        caption_preset = clip.caption_preset or body.default_caption_preset
+        if caption_preset:
+            c["caption_preset"] = caption_preset
+        hook_preset = clip.hook_preset or body.default_hook_preset
+        if hook_preset:
+            c["hook_preset"] = hook_preset
         clips.append(c)
     spec["clips"] = clips
 

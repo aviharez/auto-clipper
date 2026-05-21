@@ -8,6 +8,7 @@ segment has silent audio; voice content starts when the main clip begins.
 external-asset mode is a future extension (not built here).
 """
 import logging
+import re
 import subprocess
 from pathlib import Path
 from typing import Optional
@@ -87,14 +88,58 @@ def _rgb_to_ass(hex_color: str) -> str:
     return f"&H00{b:02X}{g:02X}{r:02X}&"
 
 
+def _apply_bracket_highlight(text: str, normal_color: str, highlight_color: str) -> str:
+    """Replace [phrase] with inline ASS color overrides. Bracket chars are stripped."""
+    def replace(m: re.Match) -> str:
+        phrase = m.group(1)
+        return f"{{\\1c{highlight_color}}}{phrase}{{\\1c{normal_color}}}"
+    return re.sub(r'\[([^\]]+)\]', replace, text)
+
+
+def _strip_brackets(text: str) -> str:
+    """Remove [bracket] markers without applying any highlight (e.g. box preset)."""
+    return re.sub(r'\[([^\]]+)\]', r'\1', text)
+
+
 def _build_hook_ass(hook_text: str, duration: float, preset: dict) -> str:
-    """Generate a simple centred ASS file that shows hook_text for `duration` seconds."""
+    """Generate an ASS file that shows hook_text for `duration` seconds."""
     font_size_pct = preset.get("font_size_pct", 7)
-    font_size   = int(font_size_pct / 100 * CLIP_HEIGHT)
-    font_family = preset.get("font_family", "Arial")
-    outline_w   = preset.get("outline_width", 6)
-    shadow      = 2 if preset.get("shadow", True) else 0
-    text_color  = _rgb_to_ass(preset.get("text_color", "#FFFFFF"))
+    font_size     = int(font_size_pct / 100 * CLIP_HEIGHT)
+    font_family   = preset.get("font_family", "Arial")
+    outline_w     = preset.get("outline_width", 6)
+    shadow        = 2 if preset.get("shadow", True) else 0
+    text_color    = _rgb_to_ass(preset.get("text_color", "#FFFFFF"))
+    border_style  = preset.get("border_style", 1)
+
+    # BorderStyle=3: OutlineColour fills the opaque box behind each line.
+    if border_style == 3:
+        outline_color = _rgb_to_ass(preset["box_color"])
+    else:
+        outline_color = "&H00000000&"
+
+    # position="lower" → alignment 2 (bottom-center), MarginV ~20% from bottom.
+    # Default (no position key or "center") → alignment 5 (centre of screen).
+    if preset.get("position") == "lower":
+        alignment = 2
+        margin_v  = 400
+    else:
+        alignment = 5
+        margin_v  = 80
+
+    margin_h = preset.get("margin_h", 80)
+
+    # Apply text transforms before highlight parsing.
+    text = hook_text
+    if preset.get("text_transform") == "upper":
+        text = text.upper()
+
+    # [bracket] highlight: if preset has highlight_color, apply inline ASS color
+    # overrides; otherwise just strip the brackets (e.g. box preset).
+    highlight_hex = preset.get("highlight_color")
+    if highlight_hex:
+        text = _apply_bracket_highlight(text, text_color, _rgb_to_ass(highlight_hex))
+    else:
+        text = _strip_brackets(text)
 
     t_end = _format_ass_time(duration)
 
@@ -110,16 +155,15 @@ def _build_hook_ass(hook_text: str, duration: float, preset: dict) -> str:
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,"
         " BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle,"
         " BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-        # Alignment 5 = centre both axes; large L/R margins so long text wraps nicely.
         (
             f"Style: Default,{font_family},{font_size},"
-            f"{text_color},&H000000FF&,&H00000000&,&H00000000&,"
-            f"-1,0,0,0,100,100,0,0,1,{outline_w},{shadow},5,80,80,80,1"
+            f"{text_color},&H000000FF&,{outline_color},&H00000000&,"
+            f"-1,0,0,0,100,100,0,0,{border_style},{outline_w},{shadow},{alignment},{margin_h},{margin_h},{margin_v},1"
         ),
         "",
         "[Events]",
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
-        f"Dialogue: 0,0:00:00.00,{t_end},Default,,0,0,0,,{hook_text}",
+        f"Dialogue: 0,0:00:00.00,{t_end},Default,,0,0,0,,{text}",
     ]
     return "\n".join(lines) + "\n"
 

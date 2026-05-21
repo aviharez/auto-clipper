@@ -719,6 +719,134 @@ re-running anything dependent on raw machine output (boundary suggestion, future
 features) does not lose ground truth. Transcript is now a two-version document, not
 a single mutable field.
 
+**Iteration 2.6 — Visual polish.**
+
+> Added after Iteration 2.5 shipped and was used in production. These are NOT new
+> structural features — they are quality tuning of the final clip's visual output,
+> attaching to existing components (`hook.py`, `caption.py`, `config.py`). Same
+> execution discipline as before: ordered steps, one at a time, each tested. Named
+> "2.6" not "3" because it is a polish layer over 2.5, not a structural new mode.
+> (Iteration 3 remains skipped — see below.)
+
+- **Step 2.6.1 — TikTok-style hook presets (3 new presets).** Add three new
+  `hook_presets` entries to `config.py` characterized by: text positioned in the
+  **lower half** of the frame (not center-dominant); bold all-caps; a single
+  **highlighted keyword or phrase** per line (bright color background or colored
+  text — green-neon, yellow, red); strong outline for legibility over any
+  background. Variation across the three presets is by **font choice + highlight
+  color + box-vs-no-box** (one preset uses a white box behind text as an
+  alternative to per-word highlight). The renderer is extended to support
+  lower-half positioning and per-word/per-phrase highlight (ASS supports both via
+  per-line styling). No architecture change — the preset system was designed for
+  this since ledger #32. Reference: the user's TikTok-screenshot example
+  (lower-half text, bright-green keyword highlight, video visible above).
+
+  **Highlight mechanism — inline `[...]` syntax in `hook_text`.** What gets
+  highlighted is editorial judgment, so the user marks it directly in the text.
+  Words or phrases wrapped in square brackets render with the preset's highlight
+  treatment (color, box, etc); everything outside brackets renders as the
+  preset's normal text style. Examples:
+
+  ```yaml
+  hook_text: "TIKTOKERS FOLLOWERS [20JT] JALAN DI MALL [GAK ADA YANG MINTA FOTO]"
+  hook_text: "PERCAYA [NGGAK]?"
+  hook_text: "BIASA AJA, NGGAK ADA YANG SPESIAL"   # zero highlights = valid
+  ```
+
+  Rules: any number of `[...]` segments allowed (no cap); brackets may contain a
+  single word or a multi-word phrase; hook text with zero brackets renders as
+  plain styled text (valid case — not every hook needs highlight). The renderer
+  strips the bracket characters before rendering; they exist only as markers in
+  source text. Bracket characters themselves never appear in the rendered output.
+
+- **Step 2.6.2 — Reverse 2.5.5 + image background + max-duration field.**
+  THREE related sub-changes to hook handling, all in `hook.py`:
+  (a) **Reverse the 2.5.5 user-modification** in which uploaded hook video
+  suppressed generated text. Now: uploaded video/image is ALWAYS used as
+  background only; hook text is ALWAYS generated using the chosen preset (2.6.1
+  presets or `blur_self`-paired presets). Behavior is uniform regardless of
+  background source — no more "if uploaded then skip text" branch.
+  (b) **Add image-file support** alongside video. The hook renderer now has three
+  background paths: `blur_self` (default, frames from the main clip blurred);
+  uploaded video (clipped to hook duration); uploaded image (displayed static for
+  hook duration). Detection by file extension. No new `Candidate` field — the
+  existing `hook_background` field accepts any of the three.
+  (c) **Add `hook_duration` field at batch level** in `config.py` and the input
+  form, plus optional per-clip `hook_duration` override on `Candidate`. When the
+  uploaded asset is a video longer than `hook_duration`, it is trimmed to fit.
+  When shorter, behavior is to loop the asset OR freeze the last frame — pick
+  one and document it as the locked behavior (recommendation: freeze last frame;
+  looping short video can look glitchy at the seam).
+
+- **Step 2.6.3 — Hook→content transition.** Add a transition layer in `hook.py`
+  between the hook segment and the main clip. Strictly **2–3 transition options
+  only** (e.g. `cut` (no transition, default), `fade` (0.25s cross-fade), and
+  `slide_up` (hook slides off the top while main clip enters from bottom,
+  ~0.3s)). Transition choice is a field on the hook preset (`transition: fade`),
+  not a free parameter on every clip. Duration is fixed per transition type, not
+  user-tunable. The pre-2.6 hard requirement from §7 (hook and main clip have
+  identical spec) still applies — transitions ride on top of that, they do not
+  replace it.
+
+- **Step 2.6.4 — Channel watermark.** New overlay step (extend `caption.py` or
+  add a tiny `watermark.py` — implementer's choice based on code organization).
+  Renders a small text watermark at the bottom-center of the frame, dark-gray
+  color, small font, **starting at `hook_duration` and continuing until end of
+  clip** (not visible during the hook segment). For now, the watermark text is
+  the string `"Daily Clip"` stored as a config value (`watermark_text` in
+  `config.py`), not a per-batch input field. Hardcoded-as-config because the user
+  currently has one channel; if multi-channel support is ever needed, the config
+  value is trivially promoted to a batch-level input — but not before that need
+  is real.
+
+**Locked rationale (Iteration 2.6 ordering).** 2.6.1 first because it produces
+the most visible quality jump and gives a concrete reference for subsequent steps.
+2.6.2 second because it unifies hook behavior (uniform code path is cleaner than
+branching). 2.6.3 third because transition design benefits from already having
+finalized hook visuals. 2.6.4 last because it is the simplest and blocks nothing.
+
+**Locked rationale (highlight syntax is inline `[...]`, not a separate field).**
+Marking the highlight inline keeps the highlighted text *literally identical* to
+the text in the hook line — impossible to desync. A separate `hook_highlight`
+field would require the user to keep two strings in sync; any mismatch (typo,
+case, punctuation) silently fails (no highlight rendered, no error). Inline
+syntax also requires no extra typing decision: while writing the hook, the user
+just wraps the word they're already typing. The choice of `[...]` over `*...*`
+or `(...)` is because square brackets rarely appear naturally in Indonesian or
+English hook text and have no Markdown-emphasis collision.
+
+**Locked rationale (no cap on highlight count).** The earlier instinct to cap at
+2 highlights per hook was protection against users diluting visual focus by
+highlighting everything. That protection is unnecessary here: the tool is
+single-user (the user IS the editor and exercises judgment), and the review page
+gives an immediate visual feedback loop — if a hook looks too busy, the user
+edits the brackets and regenerates. Imposing a cap would also force renderer
+logic ("take first 2, log warning for rest") that is pure complexity for no
+real-world payoff. Trust the user; remove the limit.
+
+**Locked rationale (reversing 2.5.5).** The 2.5.5 user-modification (uploaded hook
+video → suppress generated text) was a reasonable judgment at the time: it assumed
+the uploaded video would self-contain its own text. Real use showed this loses the
+ability to restyle text via presets (presets only apply to generated text). The
+reversal restores preset coverage to all hook variants, which is the more useful
+default given the rich 2.6.1 preset library. The user-modification is not "wrong"
+— it is replaced by a better-informed decision after seeing the system in use.
+This kind of revision based on real usage is the intended development pattern, not
+an exception to it.
+
+**Locked rationale (transition library kept tiny).** DIY clip tools most often look
+amateur precisely because they offer 20+ flashy transitions (zoom, rotate, swipe,
+flash, glitch). Two or three subtle transitions are enough and look more
+professional. Resist requests to add more — the constraint is the point. If a
+specific transition is ever needed beyond the three, add it deliberately to the
+preset library, do not expose a generic "transition picker" to users.
+
+**Locked rationale (watermark hardcoded-as-config, not input field).** With one
+channel, a per-batch input field would be friction without value. Storing as a
+config value gives the same flexibility for the user (one place to change it) with
+none of the UI clutter. Promoting to an input field is a one-line change when
+multi-channel actually exists — premature flexibility is not free.
+
 **Iteration 3 — SKIPPED by user decision (no LLM budget).**
 
 > User chose not to build auto mode due to ongoing LLM API cost. This is an
@@ -789,6 +917,14 @@ must not compete with proving the core loop.
 | 34 | Step 2.5.1 combines visual uplift + dark mode in one pass | Splitting means porting layout twice; mockups already exist |
 | 35 | Mockup porting is layout-aware, not literal | Mockups predate 2.5 scope; must leave room for new features as ported |
 | 36 | Design mockup `.jsx` files are reference, not code | Have sandbox helpers + mock data; production frontend remains source of truth for logic |
+| 37 | Hook text always generated; uploaded asset is background only | Reverses 2.5.5; uniform code path + presets apply to all variants |
+| 38 | Hook background = blur_self / video / image (3 paths) | One field `hook_background`, behavior by file type |
+| 39 | Hook asset shorter than duration → freeze last frame, not loop | Looping short asset glitches at seam |
+| 40 | Transition library kept to 2-3 options, fixed durations | DIY tools look amateur when offering 20+ transitions |
+| 41 | Watermark hardcoded as config value, not input field | One channel = no flexibility needed yet; trivial to promote later |
+| 42 | Watermark visible from `hook_duration` to end, not during hook | Hook is its own visual segment; watermark belongs to content body |
+| 43 | Hook highlight uses inline `[...]` syntax in hook_text | Inline = no desync risk; literal text always matches |
+| 44 | No cap on highlight count per hook | Single-user tool; review loop self-corrects; cap adds complexity for no payoff |
 
 ---
 

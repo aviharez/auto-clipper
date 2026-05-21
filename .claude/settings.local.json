@@ -61,7 +61,12 @@
       "Bash(rtk wc *)",
       "Bash(rtk ls *)",
       "Bash(rtk git *)",
-      "Bash(curl -s http://localhost:8000/)"
+      "Bash(curl -s http://localhost:8000/)",
+      "Bash(curl -s http://localhost:8000/api/presets)",
+      "Bash(chromium-cli screenshot *)",
+      "Bash(rtk curl *)",
+      "Bash(rtk ps *)",
+      "Bash(curl -s -o /tmp/app_js_live.js http://localhost:8000/static/app.js)"
     ]
   }
 }
