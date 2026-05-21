@@ -60,7 +60,8 @@
       "Bash(node *)",
       "Bash(rtk wc *)",
       "Bash(rtk ls *)",
-      "Bash(rtk git *)"
+      "Bash(rtk git *)",
+      "Bash(curl -s http://localhost:8000/)"
     ]
   }
 }

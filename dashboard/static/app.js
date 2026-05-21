@@ -499,6 +499,8 @@ async function renderJobList() {
 
 let _detailPoll;
 let _currentJobId = null;
+let _activeClipId = null;
+let _jobCache     = null;
 
 function _scheduleDetailPoll(jobId) {
   clearTimeout(_detailPoll);
@@ -513,8 +515,10 @@ function _restartDetailPoll() {
 
 async function showJobDetail(jobId) {
   clearTimeout(_detailPoll);
-  _detailPoll = null;
+  _detailPoll   = null;
   _currentJobId = jobId;
+  _activeClipId = null;
+  _jobCache     = null;
   Object.keys(_bsugg).forEach(k => delete _bsugg[k]);
   Object.keys(_presetDirty).forEach(k => delete _presetDirty[k]);
   Object.keys(_txWords).forEach(k => delete _txWords[k]);
@@ -531,7 +535,7 @@ async function showJobDetail(jobId) {
         <div class="detail-header-title">Loading…</div>
       </div>
     </div>
-    <div class="screen-body" style="display:flex;align-items:center;justify-content:center">
+    <div style="flex:1;display:flex;align-items:center;justify-content:center">
       <div class="loading">Loading job…</div>
     </div>
   `;
@@ -548,30 +552,36 @@ async function renderJobDetail(jobId) {
   try {
     await loadPresets();
     const job = await api('GET', `/jobs/${jobId}`);
+    _jobCache = job;
 
     const jobActive   = ACTIVE_STATES.has(job.status);
     const candsActive = job.candidates?.some(c => ACTIVE_STATES.has(c.status)) ?? false;
     clearTimeout(_detailPoll);
     _detailPoll = null;
-    if (jobActive || candsActive) {
-      _scheduleDetailPoll(jobId);
-    }
+    if (jobActive || candsActive) _scheduleDetailPoll(jobId);
 
-    const meta         = JSON.parse(job.metadata_json || '{}');
-    const title        = meta.title || job.source_url;
-    const hasApproved  = job.candidates?.some(c => c.approved && c.status === 'ready');
+    const meta          = JSON.parse(job.metadata_json || '{}');
+    const title         = meta.title || job.source_url;
+    const channelName   = meta.uploader || job.channel_name || null;
     const approvedCount = job.candidates?.filter(c => c.approved).length ?? 0;
-    const totalCount   = job.candidates?.length ?? 0;
+    const totalCount    = job.candidates?.length ?? 0;
+    const hasApproved   = job.candidates?.some(c => c.approved && c.status === 'ready');
 
-    const openIds = new Set($$('.clip-body.open').map(el => el.dataset.cid));
+    // Determine active clip — preserve selection across polls; default to first unreviewed
+    if (!_activeClipId || !job.candidates?.find(c => c.id === _activeClipId)) {
+      const firstPending = job.candidates?.find(c => !c.approved && c.status !== 'rejected');
+      _activeClipId = firstPending?.id || job.candidates?.[0]?.id || null;
+    }
+    const activeClip = job.candidates?.find(c => c.id === _activeClipId) || null;
+    const activeIdx  = job.candidates?.findIndex(c => c.id === _activeClipId) ?? -1;
 
     app.innerHTML = `
       <div class="detail-header" style="flex-shrink:0">
         <button class="detail-header-back" onclick="location.hash=''">← Jobs</button>
         <div class="detail-header-divider"></div>
         <div class="detail-header-main">
-          <div class="detail-header-title" title="${title}">${title.length > 70 ? title.slice(0, 70) + '…' : title}</div>
-          <div class="detail-header-meta">${fmtDate(job.created_at)} · ${totalCount} clip${totalCount !== 1 ? 's' : ''}</div>
+          <div class="detail-header-title" title="${escAttr(title)}">${title.length > 70 ? title.slice(0, 70) + '…' : title}</div>
+          <div class="detail-header-meta">${channelName ? channelName + ' · ' : ''}${fmtDate(job.created_at)} · ${totalCount} clip${totalCount !== 1 ? 's' : ''}</div>
         </div>
         ${badge(job.status)}
         <div class="detail-header-stats" style="${totalCount ? '' : 'display:none'}">
@@ -580,107 +590,279 @@ async function renderJobDetail(jobId) {
         </div>
         ${hasApproved ? `<button class="btn btn-primary btn-sm" id="btn-publish">↑ Upload ${approvedCount} approved</button>` : ''}
         ${job.status === 'failed' ? `<button class="btn btn-ghost btn-sm" id="btn-retry">↺ Retry</button>` : ''}
-      </div>
-      <div class="job-info-bar" style="flex-shrink:0">
-        <div>Status: <strong>${job.status}</strong></div>
-        <div>Created: <strong>${fmtDate(job.created_at)}</strong></div>
-        <div>Clips: <strong>${totalCount}</strong></div>
-        ${job.error ? `<div style="color:var(--red)">${job.error.split('\n')[0]}</div>` : ''}
+        ${job.error ? `<div style="color:var(--red);font-size:11px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escAttr(job.error)}">${job.error.split('\n')[0]}</div>` : ''}
       </div>
       ${job.status === 'downloading' ? renderDownloadProgress(job.download_progress) : ''}
-      <div class="screen-body">
-        <div class="clip-list" id="clip-list">
-          ${(job.candidates || []).map(c => renderClipCard(c, openIds.has(c.id))).join('')}
-          ${!job.candidates?.length ? '<div class="empty">No clips yet — processing may still be running.</div>' : ''}
-        </div>
+      <div class="review-body">
+        <aside class="clip-list-panel">
+          <div class="clip-list-panel-header">
+            <span style="font-size:12px;font-weight:600">Clips</span>
+            <span style="font-family:var(--font-mono);font-size:10px;color:var(--text-dim)">${totalCount}</span>
+          </div>
+          <div class="clip-list-panel-scroll">
+            ${(job.candidates || []).map((c, i) => renderClipListItem(c, i, c.id === _activeClipId)).join('')}
+            ${!job.candidates?.length ? '<div style="padding:14px;font-size:12px;color:var(--text-dim);text-align:center">Processing…</div>' : ''}
+          </div>
+        </aside>
+        <section class="clip-center-panel" id="clip-center">
+          ${renderClipCenterHtml(activeClip, activeIdx, totalCount)}
+        </section>
+        <aside class="clip-controls-panel" id="clip-controls">
+          ${activeClip
+            ? renderClipControlsHtml(activeClip)
+            : '<div style="padding:20px;color:var(--text-dim);font-size:12px">Select a clip to review</div>'}
+        </aside>
       </div>
     `;
 
-    if (hasApproved) $('#btn-publish').onclick = () => publishJob(jobId);
+    if (hasApproved) document.getElementById('btn-publish').onclick = () => publishJob(jobId);
     const retryBtn = document.getElementById('btn-retry');
     if (retryBtn) retryBtn.onclick = () => retryJob(jobId);
 
-    $$('.clip-header').forEach(h => {
-      h.onclick = () => {
-        const body = h.nextElementSibling;
-        const wasOpen = body.classList.contains('open');
-        body.classList.toggle('open');
-        if (!wasOpen) {
-          const cid    = body.dataset.cid;
-          const cStart = parseFloat(body.dataset.start);
-          const cEnd   = parseFloat(body.dataset.end);
-          if (_bsugg[cid] === undefined) fetchBsugg(cid, cStart, cEnd);
-          if (_txWords[cid] === undefined && !_txFetching[cid]) fetchTranscript(cid);
-        }
+    $$('.clip-list-item').forEach(el => {
+      el.onclick = () => {
+        _activeClipId = el.dataset.cid;
+        renderJobDetail(_currentJobId);
       };
-    });
-
-    // Re-render transcript for clips that were already open before this poll re-render.
-    $$('.clip-body.open').forEach(body => {
-      const cid  = body.dataset.cid;
-      const cand = (job.candidates || []).find(c => c.id === cid);
-      if (!cand?.needs_caption) return;
-      if (_txWords[cid] !== undefined) {
-        if (_txWords[cid].length > 0) {
-          renderTranscriptWords(cid, _txWords[cid]);
-          checkTxDirty(cid);
-        }
-        updateTxActions(cid);
-      } else if (!_txFetching[cid]) {
-        fetchTranscript(cid);
-      }
     });
 
     $$('[data-recut]').forEach(btn => {
       btn.onclick = () => triggerRecut(btn.dataset.recut, jobId);
     });
-
     $$('[data-approve]').forEach(btn => {
       btn.onclick = () => setApproval(btn.dataset.approve, true, jobId);
     });
-
     $$('[data-reject]').forEach(btn => {
       btn.onclick = () => setApproval(btn.dataset.reject, false, jobId);
     });
-
     $$('[data-nudge]').forEach(btn => {
       btn.onclick = () => nudge(btn, jobId);
     });
-
     $$('[data-preset-type]').forEach(sel => {
       sel.onchange = () => changePreset(sel.dataset.cid, sel.dataset.presetType, sel.value, jobId);
     });
-
     $$('[data-hook-src]').forEach(btn => {
       btn.onclick = () => toggleHookSource(btn.dataset.cid, btn.dataset.hookSrc);
     });
-
     $$('[data-hook-pick]').forEach(btn => {
       btn.onclick = () => document.getElementById(`hook-file-${btn.dataset.hookPick}`)?.click();
     });
-
     $$('input[id^="hook-file-"]').forEach(inp => {
       inp.onchange = () => {
-        const cid  = inp.id.replace('hook-file-', '');
-        const file = inp.files[0];
-        const nameEl   = document.getElementById(`hook-fname-${cid}`);
+        const cid       = inp.id.replace('hook-file-', '');
+        const file      = inp.files[0];
+        const nameEl    = document.getElementById(`hook-fname-${cid}`);
         const uploadBtn = inp.parentElement?.querySelector('[data-hook-upload]');
         if (nameEl)    nameEl.textContent = file ? file.name : '';
         if (uploadBtn) uploadBtn.style.display = file ? '' : 'none';
       };
     });
-
     $$('[data-hook-upload]').forEach(btn => {
       btn.onclick = () => uploadHookVideo(btn.dataset.hookUpload);
     });
-
     $$('[data-hook-remove]').forEach(btn => {
       btn.onclick = () => removeHookVideo(btn.dataset.hookRemove);
     });
 
+    // Load transcript + boundary suggestion for the active clip
+    if (activeClip) {
+      const cid = activeClip.id;
+      if (_bsugg[cid] === undefined) fetchBsugg(cid, activeClip.start, activeClip.end);
+      if (activeClip.needs_caption) {
+        if (_txWords[cid] !== undefined) {
+          if (_txWords[cid].length > 0) {
+            renderTranscriptWords(cid, _txWords[cid]);
+            checkTxDirty(cid);
+          }
+          updateTxActions(cid);
+        } else if (!_txFetching[cid]) {
+          fetchTranscript(cid);
+        }
+      }
+    }
+
   } catch (e) {
     app.innerHTML = `<div class="empty">Error: ${e.message}</div>`;
   }
+}
+
+function renderClipListItem(c, idx, isActive) {
+  const dur = c.end - c.start;
+  let dotColor = 'var(--text-dim)';
+  if (c.approved)                       dotColor = 'var(--green)';
+  else if (c.status === 'rejected')     dotColor = 'var(--red)';
+  else if (c.status === 'failed')       dotColor = 'var(--red)';
+  else if (c.status === 'ready')        dotColor = 'var(--accent)';
+  else if (ACTIVE_STATES.has(c.status)) dotColor = 'var(--amber)';
+
+  return `
+    <div class="clip-list-item${isActive ? ' active' : ''}" data-cid="${c.id}">
+      <div class="clip-list-thumb">
+        <span style="font-size:9px;color:var(--text-dim);font-family:var(--font-mono)">${String(idx + 1).padStart(2, '0')}</span>
+      </div>
+      <div style="min-width:0;flex:1">
+        <div class="clip-list-item-meta">
+          <span class="clip-list-item-idx">${String(idx + 1).padStart(2, '0')}</span>
+          <span style="width:6px;height:6px;border-radius:50%;background:${dotColor};flex-shrink:0;display:inline-block"></span>
+          <span class="clip-list-item-dur">${fmtDuration(dur)}</span>
+        </div>
+        <div class="clip-list-item-title">${c.title}</div>
+      </div>
+    </div>`;
+}
+
+function renderClipCenterHtml(c, idx, total) {
+  if (!c) return `<div class="empty" style="padding-top:80px">No clips yet — processing…</div>`;
+  const dur      = c.end - c.start;
+  const hasVideo = c.status === 'ready' || c.approved || c.status === 'uploaded';
+  return `
+    <div class="clip-center-meta">
+      <div class="clip-center-number">Clip ${String(idx + 1).padStart(2, '0')} of ${String(total).padStart(2, '0')}</div>
+      <div class="clip-center-title">${c.title}</div>
+      <div class="clip-center-timecodes">
+        <span>${fmtSecs(c.start)} → ${fmtSecs(c.end)}</span>
+        <span style="color:var(--border-strong)">·</span>
+        <span>${fmtDuration(dur)}</span>
+        <span style="color:var(--border-strong)">·</span>
+        ${badge(c.approved ? 'approved' : c.status)}
+      </div>
+    </div>
+    <div class="clip-center-video">
+      ${hasVideo
+        ? `<video controls src="/video/${c.id}" preload="metadata"></video>
+           <div class="clip-video-overlay-stub"></div>`
+        : `<div class="clip-video-placeholder">${statusMsg(c)}</div>`
+      }
+    </div>
+    ${hasVideo ? `<div class="clip-center-video-label">${previewLabel(c)}</div>` : ''}
+    ${c.hook_text ? `<div style="margin-top:8px;font-size:11px;color:var(--text-muted);max-width:300px;width:100%">Hook: <em>${c.hook_text}</em></div>` : ''}
+    ${c.youtube_url ? `<a href="${c.youtube_url}" target="_blank" class="btn btn-ghost btn-sm" style="margin-top:10px" onclick="event.stopPropagation()">▶ YouTube</a>` : ''}`;
+}
+
+function renderClipControlsHtml(c) {
+  const hasVideo = c.status === 'ready' || c.approved || c.status === 'uploaded';
+
+  // Show nudge values preserved from any pending nudge state
+  const dispStart = fmtSecs(_nudge[c.id]?.start ?? c.start);
+  const dispEnd   = fmtSecs(_nudge[c.id]?.end   ?? c.end);
+
+  const boundaryHtml = `
+    <div class="ctrl-section">
+      <span class="ctrl-section-title">Boundary</span>
+      <div class="ctrl-nudge-row" style="border-bottom:1px solid var(--border)">
+        <span class="ctrl-nudge-label">START</span>
+        <span class="ctrl-nudge-val" id="start-${c.id}">${dispStart}</span>
+        <div class="ctrl-nudge-btns">
+          <button class="btn btn-ghost btn-sm" data-nudge data-cid="${c.id}" data-field="start" data-delta="-5">−5s</button>
+          <button class="btn btn-ghost btn-sm" data-nudge data-cid="${c.id}" data-field="start" data-delta="-1">−1s</button>
+          <button class="btn btn-ghost btn-sm" data-nudge data-cid="${c.id}" data-field="start" data-delta="1">+1s</button>
+          <button class="btn btn-ghost btn-sm" data-nudge data-cid="${c.id}" data-field="start" data-delta="5">+5s</button>
+        </div>
+      </div>
+      <div class="ctrl-nudge-row">
+        <span class="ctrl-nudge-label">END</span>
+        <span class="ctrl-nudge-val" id="end-${c.id}">${dispEnd}</span>
+        <div class="ctrl-nudge-btns">
+          <button class="btn btn-ghost btn-sm" data-nudge data-cid="${c.id}" data-field="end" data-delta="-5">−5s</button>
+          <button class="btn btn-ghost btn-sm" data-nudge data-cid="${c.id}" data-field="end" data-delta="-1">−1s</button>
+          <button class="btn btn-ghost btn-sm" data-nudge data-cid="${c.id}" data-field="end" data-delta="1">+1s</button>
+          <button class="btn btn-ghost btn-sm" data-nudge data-cid="${c.id}" data-field="end" data-delta="5">+5s</button>
+        </div>
+      </div>
+    </div>`;
+
+  const suggHtml = `<div class="ctrl-sugg-wrap" id="bsugg-${c.id}">${renderBsuggHtml(c.id, _bsugg[c.id], c.start, c.end)}</div>`;
+
+  const cp = _presets?.caption || {};
+  const hp = _presets?.hook    || {};
+  const hasPresets = Object.keys(cp).length || Object.keys(hp).length;
+  const presetsHtml = hasPresets && (c.needs_caption || (c.hook_enabled && c.hook_text)) ? `
+    <div class="ctrl-section" style="border-top:1px solid var(--border)">
+      <span class="ctrl-section-title">Style</span>
+      <div class="preset-row">
+        ${c.needs_caption ? `
+          <div class="preset-field">
+            <label class="preset-label">Caption</label>
+            <select class="preset-select" data-preset-type="caption" data-cid="${c.id}">
+              ${_presetOptions(c.caption_preset, cp)}
+            </select>
+          </div>` : ''}
+        ${c.hook_enabled && c.hook_text ? `
+          <div class="preset-field">
+            <label class="preset-label">Hook style</label>
+            <select class="preset-select" data-preset-type="hook" data-cid="${c.id}">
+              ${_presetOptions(c.hook_preset || null, hp)}
+            </select>
+          </div>` : ''}
+      </div>
+    </div>` : '';
+
+  const isExternal = c.hook_background === 'external';
+  const hookHtml = c.hook_enabled ? `
+    <div class="ctrl-section" style="border-top:1px solid var(--border)">
+      <span class="ctrl-section-title">Hook source</span>
+      <div class="hook-source-toggle" style="margin-bottom:8px">
+        <button class="hook-src-btn${!isExternal ? ' active' : ''}" data-hook-src="blur_self" data-cid="${c.id}">Generated (blur)</button>
+        <button class="hook-src-btn${isExternal ? ' active' : ''}" data-hook-src="external" data-cid="${c.id}">Upload video</button>
+      </div>
+      <div id="hook-upload-${c.id}" style="${!isExternal ? 'display:none' : ''}">
+        ${isExternal ? `
+          <div class="hook-upload-status">
+            <span style="color:var(--green);font-size:11px">✓ Custom video uploaded</span>
+            <button class="btn btn-ghost btn-sm" data-hook-remove="${c.id}">Remove</button>
+          </div>` : ''}
+        <div class="hook-upload-input" id="hook-upload-input-${c.id}"${isExternal ? ' style="display:none"' : ''}>
+          <input type="file" accept="video/*" id="hook-file-${c.id}" style="display:none" />
+          <button class="btn btn-ghost btn-sm" data-hook-pick="${c.id}">Choose file…</button>
+          <span id="hook-fname-${c.id}" style="font-size:10px;color:var(--text-muted)"></span>
+          <button class="btn btn-primary btn-sm" data-hook-upload="${c.id}" style="display:none">Upload</button>
+        </div>
+      </div>
+    </div>` : '';
+
+  const txHtml = c.needs_caption ? `
+    <div class="ctrl-section" style="border-top:1px solid var(--border)">
+      <div class="tx-header" style="margin-bottom:6px">
+        <span class="ctrl-section-title" style="margin-bottom:0">Transcript</span>
+        <div class="tx-actions" id="tx-actions-${c.id}"></div>
+      </div>
+      <div class="tx-words" id="tx-words-${c.id}">
+        ${hasVideo ? '<span class="tx-loading">Loading…</span>' : '<span class="tx-empty">Available after processing</span>'}
+      </div>
+      <button class="btn btn-yellow" style="margin-top:12px;width:100%;justify-content:center;padding:9px" data-recut="${c.id}">
+        ↻ Regenerate
+      </button>
+    </div>` : `
+    <div class="ctrl-section" style="border-top:1px solid var(--border)">
+      <button class="btn btn-yellow" style="width:100%;justify-content:center;padding:9px" data-recut="${c.id}">
+        ↻ Regenerate
+      </button>
+    </div>`;
+
+  const errHtml = c.error ? `
+    <div style="padding:0 20px 14px">
+      <div class="clip-error">${c.error}</div>
+    </div>` : '';
+
+  const decisionHtml = `
+    <div class="review-decision-bar">
+      ${c.approved
+        ? `<button class="btn btn-ghost btn-sm" data-reject="${c.id}" style="flex:0 0 auto;padding:9px 14px">✕ Unapprove</button>`
+        : `<button class="btn btn-ghost-danger" data-reject="${c.id}" style="flex:0 0 auto;padding:9px 14px">✕ Reject</button>
+           <button class="btn btn-green" data-approve="${c.id}" style="flex:1;padding:9px 14px;justify-content:center">✓ Approve clip</button>`
+      }
+    </div>`;
+
+  return `
+    <div class="clip-controls-scroll">
+      ${boundaryHtml}
+      ${suggHtml}
+      ${presetsHtml}
+      ${hookHtml}
+      ${txHtml}
+      ${errHtml}
+    </div>
+    ${decisionHtml}`;
 }
 
 function renderDownloadProgress(pct) {
@@ -701,147 +883,6 @@ function renderDownloadProgress(pct) {
     </div>`;
 }
 
-function renderClipCard(c, forceOpen = false) {
-  const dur          = c.end - c.start;
-  const isOpen       = forceOpen || c.status === 'failed';
-  const approvedClass = c.approved ? 'approved' : (c.status === 'rejected' ? 'rejected' : '');
-  const hasVideo     = c.status === 'ready' || c.status === 'approved' || c.status === 'uploaded';
-
-  const cp       = _presets?.caption || {};
-  const hp       = _presets?.hook || {};
-  const cpKeys   = Object.keys(cp);
-  const effectiveHookPreset = c.hook_preset || null;
-
-  const presetBlock = cpKeys.length ? `
-    <div class="preset-row">
-      ${c.needs_caption
-        ? `<div class="preset-field">
-             <label class="preset-label">Caption</label>
-             <select class="preset-select" data-preset-type="caption" data-cid="${c.id}">
-               ${_presetOptions(c.caption_preset, cp)}
-             </select>
-           </div>`
-        : ''}
-      ${c.hook_enabled && c.hook_text
-        ? `<div class="preset-field">
-             <label class="preset-label">Hook style</label>
-             <select class="preset-select" data-preset-type="hook" data-cid="${c.id}">
-               ${_presetOptions(effectiveHookPreset, hp)}
-             </select>
-           </div>`
-        : ''}
-    </div>` : '';
-
-  const isExternal   = c.hook_background === 'external';
-  const hookVideoUi  = `
-    <div class="hook-video-section">
-      <div class="preset-label" style="margin-bottom:5px">Hook source</div>
-      <div class="hook-source-toggle">
-        <button class="hook-src-btn${!isExternal ? ' active' : ''}"
-                data-hook-src="blur_self" data-cid="${c.id}">Generated (blur)</button>
-        <button class="hook-src-btn${isExternal ? ' active' : ''}"
-                data-hook-src="external" data-cid="${c.id}">Upload video</button>
-      </div>
-      <div class="hook-upload-area" id="hook-upload-${c.id}" style="${!isExternal ? 'display:none' : ''}">
-        ${isExternal
-          ? `<div class="hook-upload-status">
-               <span style="color:var(--green,#4ade80);font-size:11px">✓ Custom video uploaded</span>
-               <button class="btn btn-ghost btn-sm" data-hook-remove="${c.id}">Remove</button>
-             </div>`
-          : ''
-        }
-        <div class="hook-upload-input" id="hook-upload-input-${c.id}"${isExternal ? ' style="display:none"' : ''}>
-          <input type="file" accept="video/*" id="hook-file-${c.id}" style="display:none" />
-          <button class="btn btn-ghost btn-sm" data-hook-pick="${c.id}">Choose file…</button>
-          <span class="hook-file-name" id="hook-fname-${c.id}" style="font-size:10px;color:var(--text-muted)"></span>
-          <button class="btn btn-primary btn-sm" data-hook-upload="${c.id}" style="display:none">Upload</button>
-        </div>
-      </div>
-    </div>`;
-
-  const transcriptSection = c.needs_caption ? `
-    <div class="tx-editor" id="tx-editor-${c.id}">
-      <div class="tx-header">
-        <span class="tx-label">Transcript</span>
-        <div class="tx-actions" id="tx-actions-${c.id}"></div>
-      </div>
-      <div class="tx-words" id="tx-words-${c.id}">
-        ${hasVideo
-          ? '<span class="tx-loading">Loading…</span>'
-          : '<span class="tx-empty">Available after processing</span>'
-        }
-      </div>
-    </div>` : '';
-
-  return `
-  <div class="clip-card ${approvedClass}" id="clip-${c.id}">
-    <div class="clip-header">
-      <div class="clip-title">${c.title}</div>
-      <div class="clip-meta">${fmtSecs(c.start)} – ${fmtSecs(c.end)} · ${fmtDuration(dur)}</div>
-      <div style="margin-left:8px">${badge(c.approved ? 'approved' : c.status)}</div>
-    </div>
-    <div class="clip-body ${isOpen ? 'open' : ''}" data-cid="${c.id}" data-start="${c.start}" data-end="${c.end}">
-      <div class="clip-layout">
-        <div>
-          <div class="clip-video-wrap">
-            ${hasVideo
-              ? `<video controls src="/video/${c.id}" preload="metadata"></video>
-                 <div class="clip-video-overlay-stub"></div>`
-              : `<div class="clip-video-placeholder">${statusMsg(c)}</div>`
-            }
-          </div>
-          ${hasVideo ? `<div class="clip-video-label">${previewLabel(c)}</div>` : ''}
-        </div>
-
-        <div class="clip-controls">
-          ${c.hook_text ? `<div style="font-size:11px;color:var(--text-muted)">Hook: <em>${c.hook_text}</em></div>` : ''}
-
-          ${presetBlock}
-
-          ${c.hook_enabled ? hookVideoUi : ''}
-
-          <div id="bsugg-${c.id}">${renderBsuggHtml(c.id, _bsugg[c.id], c.start, c.end)}</div>
-
-          <div class="nudge-group">
-            <div class="nudge-label">Start</div>
-            <div class="nudge-row">
-              <button class="btn btn-ghost btn-sm" data-nudge data-cid="${c.id}" data-field="start" data-delta="-5">−5s</button>
-              <button class="btn btn-ghost btn-sm" data-nudge data-cid="${c.id}" data-field="start" data-delta="-1">−1s</button>
-              <span class="nudge-val" id="start-${c.id}">${fmtSecs(c.start)}</span>
-              <button class="btn btn-ghost btn-sm" data-nudge data-cid="${c.id}" data-field="start" data-delta="1">+1s</button>
-              <button class="btn btn-ghost btn-sm" data-nudge data-cid="${c.id}" data-field="start" data-delta="5">+5s</button>
-            </div>
-          </div>
-
-          <div class="nudge-group">
-            <div class="nudge-label">End</div>
-            <div class="nudge-row">
-              <button class="btn btn-ghost btn-sm" data-nudge data-cid="${c.id}" data-field="end" data-delta="-5">−5s</button>
-              <button class="btn btn-ghost btn-sm" data-nudge data-cid="${c.id}" data-field="end" data-delta="-1">−1s</button>
-              <span class="nudge-val" id="end-${c.id}">${fmtSecs(c.end)}</span>
-              <button class="btn btn-ghost btn-sm" data-nudge data-cid="${c.id}" data-field="end" data-delta="1">+1s</button>
-              <button class="btn btn-ghost btn-sm" data-nudge data-cid="${c.id}" data-field="end" data-delta="5">+5s</button>
-            </div>
-          </div>
-
-          ${transcriptSection}
-
-          <div class="clip-actions">
-            <button class="btn btn-ghost btn-sm" data-recut="${c.id}">↻ Regenerate</button>
-            ${c.approved
-              ? `<button class="btn btn-ghost btn-sm" data-reject="${c.id}">✕ Unapprove</button>`
-              : `<button class="btn btn-primary btn-sm" data-approve="${c.id}">✓ Approve</button>
-                 <button class="btn btn-ghost-danger btn-sm" data-reject="${c.id}">✕ Reject</button>`
-            }
-            ${c.youtube_url ? `<a href="${c.youtube_url}" target="_blank" class="btn btn-ghost btn-sm" onclick="event.stopPropagation()">▶ YouTube</a>` : ''}
-          </div>
-
-          ${c.error ? `<div class="clip-error">${c.error}</div>` : ''}
-        </div>
-      </div>
-    </div>
-  </div>`;
-}
 
 function statusMsg(c) {
   if (c.status === 'pending')    return 'Waiting…';
