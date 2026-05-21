@@ -1360,6 +1360,12 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   background: rgba(0,0,0,0.72);
   z-index: 50;
   display: flex; align-items: center; justify-content: center;
+  animation: fadeIn 0.15s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 .modal {
@@ -1373,6 +1379,59 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .modal h3 { font-size: 14px; margin-bottom: 14px; }
 .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; }
+
+/* ── New-job modal variant ───────────────────────────────────────────────── */
+
+.modal-new-job {
+  width: 640px;
+  max-width: 95vw;
+  max-height: 88vh;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  animation: slideUp 0.18s ease;
+}
+
+@keyframes slideUp {
+  from { transform: translateY(12px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.modal-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.modal-close {
+  padding: 4px 8px;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.modal-body {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.modal-new-job .form-tabs {
+  padding: 0 20px;
+}
+
+.modal-new-job #tab-content-form,
+.modal-new-job #tab-content-yaml {
+  padding: 14px 20px;
+}
 
 /* ── Misc ────────────────────────────────────────────────────────────────── */
 

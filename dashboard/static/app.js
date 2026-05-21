@@ -119,76 +119,6 @@ async function showJobList() {
         <button class="btn btn-primary" id="btn-new">+ New Job</button>
       </div>
     </div>
-    <div id="new-job-panel" style="display:none">
-      <div class="form-tabs">
-        <button class="form-tab-btn active" id="tab-form" type="button">Form</button>
-        <button class="form-tab-btn" id="tab-yaml" type="button">Upload YAML</button>
-      </div>
-      <div id="tab-content-form">
-        <div class="form-grid">
-          <div class="form-field">
-            <label class="form-label" for="form-source-url">Source URL</label>
-            <input class="form-input" id="form-source-url" type="url"
-                   placeholder="https://youtube.com/watch?v=…" autocomplete="off" />
-          </div>
-          <div class="form-field">
-            <label class="form-label" for="form-channel-name">Channel name</label>
-            <input class="form-input" id="form-channel-name" type="text"
-                   placeholder="Optional — shown as branding overlay" autocomplete="off" />
-          </div>
-          <div class="form-checkbox-group">
-            <label class="form-checkbox-row">
-              <input type="checkbox" id="form-captions" checked />
-              <span>Default captions on</span>
-            </label>
-            <label class="form-checkbox-row">
-              <input type="checkbox" id="form-hook" checked />
-              <span>Default hook on</span>
-            </label>
-          </div>
-          <div class="form-field" style="max-width:180px">
-            <label class="form-label" for="form-hook-duration">Hook duration (s)</label>
-            <input class="form-input form-input-sm" id="form-hook-duration" type="number"
-                   min="1" max="10" step="0.5" value="3" />
-          </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 10px">
-            <div class="form-field">
-              <label class="form-label" for="form-caption-preset">Caption style</label>
-              <select class="form-input" id="form-caption-preset">
-                <option value="">Config default</option>
-              </select>
-            </div>
-            <div class="form-field">
-              <label class="form-label" for="form-hook-preset">Hook style</label>
-              <select class="form-input" id="form-hook-preset">
-                <option value="">Config default</option>
-              </select>
-            </div>
-          </div>
-        </div>
-        <div class="form-clips-header">
-          <span class="form-clips-title">Clips</span>
-          <button class="btn btn-ghost btn-sm" id="btn-add-clip" type="button">+ Add Clip</button>
-        </div>
-        <div class="form-clips-list" id="form-clips-list"></div>
-        <div class="form-actions">
-          <button class="btn btn-ghost btn-sm" id="btn-cancel-form" type="button">Cancel</button>
-          <button class="btn btn-primary btn-sm" id="btn-form-submit" type="button">Process</button>
-        </div>
-      </div>
-      <div id="tab-content-yaml" style="display:none">
-        <div class="upload-area" id="drop-zone">
-          <input type="file" id="yaml-input" accept=".yaml,.yml" />
-          <div style="font-size:22px;margin-bottom:4px">📄</div>
-          <strong style="font-size:13px">Drop your clips YAML here</strong>
-          <p>or click to browse</p>
-        </div>
-        <div style="display:flex;gap:8px;justify-content:flex-end">
-          <button class="btn btn-ghost btn-sm" id="btn-cancel-upload">Cancel</button>
-          <button class="btn btn-primary btn-sm" id="btn-submit-upload" disabled>Upload &amp; Process</button>
-        </div>
-      </div>
-    </div>
     <div class="job-table-header" id="job-table-header" style="display:none">
       <div>Source</div><div>Status</div><div>Clips</div><div>Age</div><div></div>
     </div>
@@ -197,13 +127,118 @@ async function showJobList() {
     </div>
   `;
 
-  $('#btn-new').onclick = () => {
-    const panel = $('#new-job-panel');
-    panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
-  };
+  $('#btn-new').onclick = openNewJobModal;
+  await renderJobList();
+}
+
+// ── New Job Modal ──────────────────────────────────────────────────────────
+
+let _newJobModalEl = null;
+let _newJobKeyHandler = null;
+
+function openNewJobModal() {
+  if (_newJobModalEl) return;
+
+  _formClips = [];
+  Object.keys(_formHookFiles).forEach(k => delete _formHookFiles[k]);
+
+  const el = document.createElement('div');
+  el.className = 'modal-backdrop';
+  el.innerHTML = `
+    <div class="modal modal-new-job" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <span class="modal-title">New Job</span>
+        <button class="modal-close btn btn-ghost btn-sm" id="modal-close-btn">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-tabs">
+          <button class="form-tab-btn active" id="tab-form" type="button">Form</button>
+          <button class="form-tab-btn" id="tab-yaml" type="button">Upload YAML</button>
+        </div>
+        <div id="tab-content-form">
+          <div class="form-grid">
+            <div class="form-field">
+              <label class="form-label" for="form-source-url">Source URL</label>
+              <input class="form-input" id="form-source-url" type="url"
+                     placeholder="https://youtube.com/watch?v=…" autocomplete="off" />
+            </div>
+            <div class="form-field">
+              <label class="form-label" for="form-channel-name">Channel name</label>
+              <input class="form-input" id="form-channel-name" type="text"
+                     placeholder="Optional — shown as branding overlay" autocomplete="off" />
+            </div>
+            <div class="form-checkbox-group">
+              <label class="form-checkbox-row">
+                <input type="checkbox" id="form-captions" checked />
+                <span>Default captions on</span>
+              </label>
+              <label class="form-checkbox-row">
+                <input type="checkbox" id="form-hook" checked />
+                <span>Default hook on</span>
+              </label>
+            </div>
+            <div class="form-field" style="max-width:180px">
+              <label class="form-label" for="form-hook-duration">Hook duration (s)</label>
+              <input class="form-input form-input-sm" id="form-hook-duration" type="number"
+                     min="1" max="10" step="0.5" value="3" />
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 10px">
+              <div class="form-field">
+                <label class="form-label" for="form-caption-preset">Caption style</label>
+                <select class="form-input" id="form-caption-preset">
+                  <option value="">Config default</option>
+                </select>
+              </div>
+              <div class="form-field">
+                <label class="form-label" for="form-hook-preset">Hook style</label>
+                <select class="form-input" id="form-hook-preset">
+                  <option value="">Config default</option>
+                </select>
+              </div>
+            </div>
+          </div>
+          <div class="form-clips-header">
+            <span class="form-clips-title">Clips</span>
+            <button class="btn btn-ghost btn-sm" id="btn-add-clip" type="button">+ Add Clip</button>
+          </div>
+          <div class="form-clips-list" id="form-clips-list"></div>
+          <div class="form-actions">
+            <button class="btn btn-ghost btn-sm" id="btn-cancel-form" type="button">Cancel</button>
+            <button class="btn btn-primary btn-sm" id="btn-form-submit" type="button">Process</button>
+          </div>
+        </div>
+        <div id="tab-content-yaml" style="display:none">
+          <div class="upload-area" id="drop-zone">
+            <input type="file" id="yaml-input" accept=".yaml,.yml" />
+            <div style="font-size:22px;margin-bottom:4px">📄</div>
+            <strong style="font-size:13px">Drop your clips YAML here</strong>
+            <p>or click to browse</p>
+          </div>
+          <div style="display:flex;gap:8px;justify-content:flex-end">
+            <button class="btn btn-ghost btn-sm" id="btn-cancel-upload">Cancel</button>
+            <button class="btn btn-primary btn-sm" id="btn-submit-upload" disabled>Upload &amp; Process</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(el);
+  _newJobModalEl = el;
+
+  el.addEventListener('click', (e) => { if (e.target === el) closeNewJobModal(); });
+
+  _newJobKeyHandler = (e) => { if (e.key === 'Escape') closeNewJobModal(); };
+  document.addEventListener('keydown', _newJobKeyHandler);
+
+  document.getElementById('modal-close-btn').onclick = closeNewJobModal;
 
   setupNewJobPanel();
-  await renderJobList();
+}
+
+function closeNewJobModal() {
+  if (_newJobModalEl) { _newJobModalEl.remove(); _newJobModalEl = null; }
+  if (_newJobKeyHandler) { document.removeEventListener('keydown', _newJobKeyHandler); _newJobKeyHandler = null; }
 }
 
 function setupUpload() {
@@ -244,7 +279,7 @@ function setupUpload() {
       }
       const { job_id } = await res.json();
       toast('Job created! Processing…', 'success');
-      $('#new-job-panel').style.display = 'none';
+      closeNewJobModal();
       location.hash = 'job/' + job_id;
     } catch (e) {
       toast('Error: ' + e.message, 'error');
@@ -277,8 +312,8 @@ async function setupNewJobPanel() {
     $('#tab-content-form').style.display = 'none';
   };
 
-  $('#btn-cancel-form').onclick  = () => { $('#new-job-panel').style.display = 'none'; };
-  $('#btn-cancel-upload').onclick = () => { $('#new-job-panel').style.display = 'none'; };
+  $('#btn-cancel-form').onclick  = closeNewJobModal;
+  $('#btn-cancel-upload').onclick = closeNewJobModal;
   $('#btn-add-clip').onclick      = () => {
     _formClips.push({ start: '', end: '', title: '', hook_text: '', hook_background: 'blur_self', caption_preset: '', hook_preset: '', hook_duration: '' });
     renderFormClips();
@@ -478,6 +513,7 @@ async function submitForm() {
     toast('Job created! Processing…', 'success');
     _formClips = [];
     Object.keys(_formHookFiles).forEach(k => delete _formHookFiles[k]);
+    closeNewJobModal();
     location.hash = 'job/' + job_id;
   } catch (e) {
     toast('Error: ' + e.message, 'error');
