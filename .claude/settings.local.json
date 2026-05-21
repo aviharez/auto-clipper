@@ -55,7 +55,11 @@
       "Bash(uvicorn dashboard.main:app --port 8000)",
       "Bash(rtk read *)",
       "Bash(rtk grep *)",
-      "Bash(python3 *)"
+      "Bash(python3 *)",
+      "Bash(node --input-type=module)",
+      "Bash(node *)",
+      "Bash(rtk wc *)",
+      "Bash(rtk ls *)"
     ]
   }
 }

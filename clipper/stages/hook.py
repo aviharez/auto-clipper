@@ -27,19 +27,32 @@ log = logging.getLogger(__name__)
 
 def run(job: dict, cand_id: str, candidate: dict) -> Optional[str]:
     """Prepend hook segment to the (captioned) clip. Returns hooked.mp4 path or None."""
-    if not candidate["hook_enabled"] or not (candidate.get("hook_text") or "").strip():
+    if not candidate["hook_enabled"]:
         return None
 
-    clip_dir = JOBS_DIR / job["id"] / "clips" / cand_id
-    raw      = clip_dir / "raw.mp4"
-    captioned = clip_dir / "captioned.mp4"
-    hook_out  = clip_dir / "hook.mp4"
-    out_path  = clip_dir / "hooked.mp4"
+    clip_dir    = JOBS_DIR / job["id"] / "clips" / cand_id
+    raw         = clip_dir / "raw.mp4"
+    captioned   = clip_dir / "captioned.mp4"
+    hook_out    = clip_dir / "hook.mp4"
+    out_path    = clip_dir / "hooked.mp4"
+    external_bg = clip_dir / "hook_background.mp4"
+    main_clip   = captioned if captioned.exists() else raw
 
-    # Hook background always comes from raw.mp4 — captioned.mp4 has burnt-in
-    # subtitle text that would look wrong blurred.
-    # The main content appended after the hook is captioned.mp4 if it exists.
-    main_clip = captioned if captioned.exists() else raw
+    is_external = (
+        candidate.get("hook_background", "blur_self") != "blur_self"
+        and external_bg.exists()
+    )
+
+    if is_external:
+        # External video is used as-is — no blur, no text overlay.
+        # hook_text is intentionally ignored: the uploaded clip already contains it.
+        _concatenate(str(external_bg), str(main_clip), str(out_path))
+        log.info("Hook prepended (external) → %s", out_path)
+        return str(out_path)
+
+    # blur_self mode: hook_text is required to produce the overlay.
+    if not (candidate.get("hook_text") or "").strip():
+        return None
 
     hook_preset_name = candidate.get("hook_preset") or DEFAULT_HOOK_PRESET
     preset = HOOK_PRESETS.get(hook_preset_name) or HOOK_PRESETS[DEFAULT_HOOK_PRESET]

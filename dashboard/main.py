@@ -3,6 +3,7 @@ FastAPI dashboard — serves the web UI and REST API for job/candidate managemen
 """
 import json
 import logging
+import shutil
 import traceback
 from pathlib import Path
 from typing import Optional
@@ -15,7 +16,7 @@ from pydantic import BaseModel
 
 import clipper.jobs as db
 from clipper import runner
-from clipper.config import CAPTION_PRESETS, DEFAULT_CAPTION_PRESET, HOOK_PRESETS, DEFAULT_HOOK_PRESET, JOBS_DIR
+from clipper.config import CAPTION_PRESETS, DEFAULT_CAPTION_PRESET, HOOK_PRESETS, DEFAULT_HOOK_PRESET, JOBS_DIR, DATA_DIR
 from clipper.stages import publish as publish_stage
 
 log = logging.getLogger(__name__)
@@ -74,6 +75,71 @@ def api_list_jobs():
     return jobs
 
 
+class ClipFormItem(BaseModel):
+    start: str
+    end: str
+    title: str
+    hook_text: Optional[str] = None
+    hook_enabled: Optional[bool] = None
+    needs_caption: Optional[bool] = None
+
+
+class JobFormBody(BaseModel):
+    source_url: str
+    channel_name: Optional[str] = None
+    default_captions: bool = True
+    hook_enabled: bool = True
+    hook_duration: int = 3
+    clips: list[ClipFormItem]
+
+
+@app.post("/api/jobs/from-form")
+async def api_create_job_from_form(body: JobFormBody):
+    import yaml as yaml_lib
+    import uuid
+
+    if not body.clips:
+        raise HTTPException(400, "At least one clip is required")
+
+    spec: dict = {
+        "source": body.source_url,
+        "default_captions": body.default_captions,
+        "hook": {
+            "enabled": body.hook_enabled,
+            "duration": body.hook_duration,
+            "background": "blur_self",
+        },
+    }
+    if body.channel_name:
+        spec["channel_name"] = body.channel_name
+
+    clips = []
+    for clip in body.clips:
+        c: dict = {"start": clip.start, "end": clip.end, "title": clip.title}
+        if clip.hook_text:
+            c["hook_text"] = clip.hook_text
+        if clip.hook_enabled is not None and clip.hook_enabled != body.hook_enabled:
+            c["hook"] = clip.hook_enabled
+        if clip.needs_caption is not None and clip.needs_caption != body.default_captions:
+            c["needs_caption"] = clip.needs_caption
+        clips.append(c)
+    spec["clips"] = clips
+
+    yaml_bytes = yaml_lib.dump(spec, allow_unicode=True, sort_keys=False).encode("utf-8")
+
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    tmp_id = str(uuid.uuid4())
+    tmp_yaml = DATA_DIR / f"tmp_{tmp_id}.yaml"
+    tmp_yaml.write_bytes(yaml_bytes)
+
+    job_id = db.create_job(body.source_url, str(tmp_yaml), channel_name=body.channel_name or None)
+    final_yaml = JOBS_DIR / job_id / "input.yaml"
+    tmp_yaml.rename(final_yaml)
+    db.update_job(job_id, yaml_path=str(final_yaml))
+
+    return {"job_id": job_id}
+
+
 @app.post("/api/jobs")
 async def api_create_job(yaml_file: UploadFile = File(...)):
     import yaml as yaml_lib
@@ -91,9 +157,8 @@ async def api_create_job(yaml_file: UploadFile = File(...)):
     channel_name = (spec.get("channel_name") or "").strip() or None
 
     # Save the YAML to a temp location; will be moved after job_id is known
-    import uuid, os
+    import uuid
     tmp_id = str(uuid.uuid4())
-    from clipper.config import JOBS_DIR, DATA_DIR
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     tmp_yaml = DATA_DIR / f"tmp_{tmp_id}.yaml"
     tmp_yaml.write_bytes(content)
@@ -214,6 +279,45 @@ def api_update_style(cand_id: str, body: StyleUpdate):
         db.update_candidate(cand_id, **updates)
 
     return {"status": "updated", **updates}
+
+
+@app.post("/api/candidates/{cand_id}/hook-video")
+async def api_upload_hook_video(cand_id: str, file: UploadFile = File(...)):
+    candidate = db.get_candidate(cand_id)
+    if not candidate:
+        raise HTTPException(404, "Candidate not found")
+    clip_dir = JOBS_DIR / candidate["job_id"] / "clips" / cand_id
+    dest = clip_dir / "hook_background.mp4"
+    with dest.open("wb") as f:
+        shutil.copyfileobj(file.file, f)
+    db.update_candidate(cand_id, hook_background="external")
+    return {"ok": True}
+
+
+@app.delete("/api/candidates/{cand_id}/hook-video")
+def api_remove_hook_video(cand_id: str):
+    candidate = db.get_candidate(cand_id)
+    if not candidate:
+        raise HTTPException(404, "Candidate not found")
+    clip_dir = JOBS_DIR / candidate["job_id"] / "clips" / cand_id
+    dest = clip_dir / "hook_background.mp4"
+    if dest.exists():
+        dest.unlink()
+    db.update_candidate(cand_id, hook_background="blur_self")
+    return {"ok": True}
+
+
+@app.post("/api/jobs/{job_id}/hook-videos/{clip_index}")
+async def api_stage_hook_video(job_id: str, clip_index: int, file: UploadFile = File(...)):
+    job = db.get_job(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    staged_dir = JOBS_DIR / job_id / "staged_hooks"
+    staged_dir.mkdir(exist_ok=True)
+    dest = staged_dir / f"{clip_index}.mp4"
+    with dest.open("wb") as f:
+        shutil.copyfileobj(file.file, f)
+    return {"ok": True}
 
 
 @app.post("/api/candidates/{cand_id}/restyle")

@@ -119,16 +119,55 @@ async function showJobList() {
         <button class="btn btn-primary" id="btn-new">+ New Job</button>
       </div>
     </div>
-    <div id="upload-panel" style="display:none">
-      <div class="upload-area" id="drop-zone">
-        <input type="file" id="yaml-input" accept=".yaml,.yml" />
-        <div style="font-size:22px;margin-bottom:4px">📄</div>
-        <strong style="font-size:13px">Drop your clips YAML here</strong>
-        <p>or click to browse</p>
+    <div id="new-job-panel" style="display:none">
+      <div class="form-tabs">
+        <button class="form-tab-btn active" id="tab-form" type="button">Form</button>
+        <button class="form-tab-btn" id="tab-yaml" type="button">Upload YAML</button>
       </div>
-      <div style="display:flex;gap:8px;justify-content:flex-end">
-        <button class="btn btn-ghost btn-sm" id="btn-cancel-upload">Cancel</button>
-        <button class="btn btn-primary btn-sm" id="btn-submit-upload" disabled>Upload &amp; Process</button>
+      <div id="tab-content-form">
+        <div class="form-grid">
+          <div class="form-field">
+            <label class="form-label" for="form-source-url">Source URL</label>
+            <input class="form-input" id="form-source-url" type="url"
+                   placeholder="https://youtube.com/watch?v=…" autocomplete="off" />
+          </div>
+          <div class="form-field">
+            <label class="form-label" for="form-channel-name">Channel name</label>
+            <input class="form-input" id="form-channel-name" type="text"
+                   placeholder="Optional — shown as branding overlay" autocomplete="off" />
+          </div>
+          <div class="form-checkbox-group">
+            <label class="form-checkbox-row">
+              <input type="checkbox" id="form-captions" checked />
+              <span>Default captions on</span>
+            </label>
+            <label class="form-checkbox-row">
+              <input type="checkbox" id="form-hook" checked />
+              <span>Default hook on</span>
+            </label>
+          </div>
+        </div>
+        <div class="form-clips-header">
+          <span class="form-clips-title">Clips</span>
+          <button class="btn btn-ghost btn-sm" id="btn-add-clip" type="button">+ Add Clip</button>
+        </div>
+        <div class="form-clips-list" id="form-clips-list"></div>
+        <div class="form-actions">
+          <button class="btn btn-ghost btn-sm" id="btn-cancel-form" type="button">Cancel</button>
+          <button class="btn btn-primary btn-sm" id="btn-form-submit" type="button">Process</button>
+        </div>
+      </div>
+      <div id="tab-content-yaml" style="display:none">
+        <div class="upload-area" id="drop-zone">
+          <input type="file" id="yaml-input" accept=".yaml,.yml" />
+          <div style="font-size:22px;margin-bottom:4px">📄</div>
+          <strong style="font-size:13px">Drop your clips YAML here</strong>
+          <p>or click to browse</p>
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button class="btn btn-ghost btn-sm" id="btn-cancel-upload">Cancel</button>
+          <button class="btn btn-primary btn-sm" id="btn-submit-upload" disabled>Upload &amp; Process</button>
+        </div>
       </div>
     </div>
     <div class="job-table-header" id="job-table-header" style="display:none">
@@ -140,13 +179,11 @@ async function showJobList() {
   `;
 
   $('#btn-new').onclick = () => {
-    const panel = $('#upload-panel');
+    const panel = $('#new-job-panel');
     panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
   };
 
-  $('#btn-cancel-upload').onclick = () => { $('#upload-panel').style.display = 'none'; };
-
-  setupUpload();
+  setupNewJobPanel();
   await renderJobList();
 }
 
@@ -188,7 +225,7 @@ function setupUpload() {
       }
       const { job_id } = await res.json();
       toast('Job created! Processing…', 'success');
-      $('#upload-panel').style.display = 'none';
+      $('#new-job-panel').style.display = 'none';
       location.hash = 'job/' + job_id;
     } catch (e) {
       toast('Error: ' + e.message, 'error');
@@ -196,6 +233,198 @@ function setupUpload() {
       submitBtn.textContent = 'Upload & Process';
     }
   };
+}
+
+// ── Form-based job creation ────────────────────────────────────────────────
+
+let _formClips = [];
+let _formHookFiles = {}; // clip index → File
+
+function escAttr(s) {
+  return (s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+}
+
+function setupNewJobPanel() {
+  $('#tab-form').onclick = () => {
+    $('#tab-form').classList.add('active');
+    $('#tab-yaml').classList.remove('active');
+    $('#tab-content-form').style.display = '';
+    $('#tab-content-yaml').style.display = 'none';
+  };
+  $('#tab-yaml').onclick = () => {
+    $('#tab-yaml').classList.add('active');
+    $('#tab-form').classList.remove('active');
+    $('#tab-content-yaml').style.display = '';
+    $('#tab-content-form').style.display = 'none';
+  };
+
+  $('#btn-cancel-form').onclick  = () => { $('#new-job-panel').style.display = 'none'; };
+  $('#btn-cancel-upload').onclick = () => { $('#new-job-panel').style.display = 'none'; };
+  $('#btn-add-clip').onclick      = () => {
+    _formClips.push({ start: '', end: '', title: '', hook_text: '', hook_background: 'blur_self' });
+    renderFormClips();
+  };
+  $('#btn-form-submit').onclick = submitForm;
+
+  renderFormClips();
+  setupUpload();
+}
+
+function renderFormClips() {
+  const container = document.getElementById('form-clips-list');
+  if (!container) return;
+
+  if (!_formClips.length) {
+    container.innerHTML = '<div class="form-clip-empty">No clips yet — click "+ Add Clip" to start.</div>';
+    return;
+  }
+
+  container.innerHTML = _formClips.map((clip, i) => `
+    <div class="form-clip-row">
+      <div class="form-clip-header">
+        <span class="form-clip-num">#${i + 1}</span>
+        <button class="btn btn-ghost btn-sm" type="button" data-remove-clip="${i}">✕</button>
+      </div>
+      <div class="form-clip-grid">
+        <div class="form-field">
+          <label class="form-label">Start</label>
+          <input class="form-input form-input-sm" type="text"
+                 data-clip-idx="${i}" data-clip-field="start"
+                 value="${escAttr(clip.start)}" placeholder="MM:SS" />
+        </div>
+        <div class="form-field">
+          <label class="form-label">End</label>
+          <input class="form-input form-input-sm" type="text"
+                 data-clip-idx="${i}" data-clip-field="end"
+                 value="${escAttr(clip.end)}" placeholder="MM:SS" />
+        </div>
+        <div class="form-field form-field-span">
+          <label class="form-label">Title</label>
+          <input class="form-input" type="text"
+                 data-clip-idx="${i}" data-clip-field="title"
+                 value="${escAttr(clip.title)}" placeholder="Clip title" />
+        </div>
+        <div class="form-field form-field-span">
+          <label class="form-label">Hook text</label>
+          <input class="form-input" type="text"
+                 data-clip-idx="${i}" data-clip-field="hook_text"
+                 value="${escAttr(clip.hook_text)}" placeholder="Optional hook line" />
+        </div>
+        <div class="form-field">
+          <label class="form-label">Hook source</label>
+          <select class="form-input form-input-sm" data-clip-idx="${i}" data-clip-field="hook_background">
+            <option value="blur_self"${clip.hook_background !== 'external' ? ' selected' : ''}>Generated (blur)</option>
+            <option value="external"${clip.hook_background === 'external' ? ' selected' : ''}>Upload video</option>
+          </select>
+        </div>
+        <div class="form-field" id="form-hook-file-row-${i}"${clip.hook_background !== 'external' ? ' style="display:none"' : ''}>
+          <label class="form-label">Hook video file</label>
+          <input type="file" accept="video/*" class="form-input form-input-sm"
+                 data-clip-hook-file="${i}"
+                 style="padding:4px 6px;cursor:pointer" />
+          ${_formHookFiles[i] ? `<span style="font-size:10px;color:var(--text-muted);margin-top:2px">${escAttr(_formHookFiles[i].name)}</span>` : ''}
+        </div>
+      </div>
+    </div>
+  `).join('');
+
+  $$('[data-clip-idx]', container).forEach(inp => {
+    if (inp.dataset.clipField === 'hook_background') {
+      inp.onchange = () => {
+        const idx = +inp.dataset.clipIdx;
+        _formClips[idx].hook_background = inp.value;
+        const fileRow = document.getElementById(`form-hook-file-row-${idx}`);
+        if (fileRow) fileRow.style.display = inp.value === 'external' ? '' : 'none';
+      };
+    } else {
+      inp.oninput = () => {
+        _formClips[+inp.dataset.clipIdx][inp.dataset.clipField] = inp.value;
+      };
+    }
+  });
+
+  $$('[data-clip-hook-file]', container).forEach(inp => {
+    inp.onchange = () => {
+      const idx = +inp.dataset.clipHookFile;
+      _formHookFiles[idx] = inp.files[0] || null;
+    };
+  });
+
+  $$('[data-remove-clip]', container).forEach(btn => {
+    btn.onclick = () => {
+      const idx = +btn.dataset.removeClip;
+      delete _formHookFiles[idx];
+      _formClips.splice(idx, 1);
+      // Re-index _formHookFiles after splice
+      const reindexed = {};
+      Object.keys(_formHookFiles).forEach(k => {
+        const n = +k;
+        if (n > idx) reindexed[n - 1] = _formHookFiles[k];
+        else if (n < idx) reindexed[n] = _formHookFiles[k];
+      });
+      Object.keys(_formHookFiles).forEach(k => delete _formHookFiles[k]);
+      Object.assign(_formHookFiles, reindexed);
+      renderFormClips();
+    };
+  });
+}
+
+async function submitForm() {
+  const sourceUrl   = $('#form-source-url')?.value.trim();
+  const channelName = $('#form-channel-name')?.value.trim();
+  const defCaptions = $('#form-captions')?.checked ?? true;
+  const hookEnabled = $('#form-hook')?.checked ?? true;
+
+  if (!sourceUrl)       { toast('Source URL is required', 'error'); return; }
+  if (!_formClips.length) { toast('Add at least one clip', 'error'); return; }
+
+  for (let i = 0; i < _formClips.length; i++) {
+    const c = _formClips[i];
+    if (!c.start?.trim() || !c.end?.trim() || !c.title?.trim()) {
+      toast(`Clip #${i + 1}: start, end, and title are required`, 'error');
+      return;
+    }
+  }
+
+  const btn = $('#btn-form-submit');
+  btn.disabled = true;
+  btn.textContent = 'Creating…';
+
+  try {
+    const { job_id } = await api('POST', '/jobs/from-form', {
+      source_url:       sourceUrl,
+      channel_name:     channelName || null,
+      default_captions: defCaptions,
+      hook_enabled:     hookEnabled,
+      clips: _formClips.map(c => ({
+        start:     c.start.trim(),
+        end:       c.end.trim(),
+        title:     c.title.trim(),
+        hook_text: c.hook_text?.trim() || null,
+      })),
+    });
+
+    // Upload staged hook videos for clips that selected "upload video"
+    const hookUploads = Object.entries(_formHookFiles).filter(([, f]) => f);
+    if (hookUploads.length) {
+      btn.textContent = 'Uploading hook videos…';
+      await Promise.all(hookUploads.map(async ([idx, file]) => {
+        const fd = new FormData();
+        fd.append('file', file);
+        const res = await fetch(`/api/jobs/${job_id}/hook-videos/${idx}`, { method: 'POST', body: fd });
+        if (!res.ok) throw new Error(`Hook video ${+idx + 1} upload failed`);
+      }));
+    }
+
+    toast('Job created! Processing…', 'success');
+    _formClips = [];
+    Object.keys(_formHookFiles).forEach(k => delete _formHookFiles[k]);
+    location.hash = 'job/' + job_id;
+  } catch (e) {
+    toast('Error: ' + e.message, 'error');
+    btn.disabled = false;
+    btn.textContent = 'Process';
+  }
 }
 
 async function renderJobList() {
@@ -393,6 +622,33 @@ async function renderJobDetail(jobId) {
       sel.onchange = () => changePreset(sel.dataset.cid, sel.dataset.presetType, sel.value, jobId);
     });
 
+    $$('[data-hook-src]').forEach(btn => {
+      btn.onclick = () => toggleHookSource(btn.dataset.cid, btn.dataset.hookSrc);
+    });
+
+    $$('[data-hook-pick]').forEach(btn => {
+      btn.onclick = () => document.getElementById(`hook-file-${btn.dataset.hookPick}`)?.click();
+    });
+
+    $$('input[id^="hook-file-"]').forEach(inp => {
+      inp.onchange = () => {
+        const cid  = inp.id.replace('hook-file-', '');
+        const file = inp.files[0];
+        const nameEl   = document.getElementById(`hook-fname-${cid}`);
+        const uploadBtn = inp.parentElement?.querySelector('[data-hook-upload]');
+        if (nameEl)    nameEl.textContent = file ? file.name : '';
+        if (uploadBtn) uploadBtn.style.display = file ? '' : 'none';
+      };
+    });
+
+    $$('[data-hook-upload]').forEach(btn => {
+      btn.onclick = () => uploadHookVideo(btn.dataset.hookUpload);
+    });
+
+    $$('[data-hook-remove]').forEach(btn => {
+      btn.onclick = () => removeHookVideo(btn.dataset.hookRemove);
+    });
+
   } catch (e) {
     app.innerHTML = `<div class="empty">Error: ${e.message}</div>`;
   }
@@ -429,11 +685,31 @@ function renderClipCard(c, forceOpen = false) {
         : ''}
     </div>` : '';
 
-  // Stub placeholders — space reserved for upcoming 2.5 features
-  const stubHookVideo = `
-    <div class="stub-section">
-      <div class="stub-label">Hook video · 2.5.5</div>
-      <div class="stub-body">Custom hook background upload</div>
+  const isExternal   = c.hook_background === 'external';
+  const hookVideoUi  = `
+    <div class="hook-video-section">
+      <div class="preset-label" style="margin-bottom:5px">Hook source</div>
+      <div class="hook-source-toggle">
+        <button class="hook-src-btn${!isExternal ? ' active' : ''}"
+                data-hook-src="blur_self" data-cid="${c.id}">Generated (blur)</button>
+        <button class="hook-src-btn${isExternal ? ' active' : ''}"
+                data-hook-src="external" data-cid="${c.id}">Upload video</button>
+      </div>
+      <div class="hook-upload-area" id="hook-upload-${c.id}" style="${!isExternal ? 'display:none' : ''}">
+        ${isExternal
+          ? `<div class="hook-upload-status">
+               <span style="color:var(--green,#4ade80);font-size:11px">✓ Custom video uploaded</span>
+               <button class="btn btn-ghost btn-sm" data-hook-remove="${c.id}">Remove</button>
+             </div>`
+          : ''
+        }
+        <div class="hook-upload-input" id="hook-upload-input-${c.id}"${isExternal ? ' style="display:none"' : ''}>
+          <input type="file" accept="video/*" id="hook-file-${c.id}" style="display:none" />
+          <button class="btn btn-ghost btn-sm" data-hook-pick="${c.id}">Choose file…</button>
+          <span class="hook-file-name" id="hook-fname-${c.id}" style="font-size:10px;color:var(--text-muted)"></span>
+          <button class="btn btn-primary btn-sm" data-hook-upload="${c.id}" style="display:none">Upload</button>
+        </div>
+      </div>
     </div>`;
 
   const stubTranscript = `
@@ -467,7 +743,7 @@ function renderClipCard(c, forceOpen = false) {
 
           ${presetBlock}
 
-          ${c.hook_enabled ? stubHookVideo : ''}
+          ${c.hook_enabled ? hookVideoUi : ''}
 
           <div id="bsugg-${c.id}">${renderBsuggHtml(c.id, _bsugg[c.id], c.start, c.end)}</div>
 
@@ -532,6 +808,41 @@ async function changePreset(cid, type, value, jobId) {
     await api('PUT', `/candidates/${cid}/style`, body);
     _presetDirty[cid] = true;
     toast('Preset saved — click Regenerate to apply');
+  } catch (e) {
+    toast('Error: ' + e.message, 'error');
+  }
+}
+
+// ── Hook video upload ─────────────────────────────────────────────────────
+
+function toggleHookSource(cid, src) {
+  const uploadArea = document.getElementById(`hook-upload-${cid}`);
+  const btns = document.querySelectorAll(`[data-hook-src][data-cid="${cid}"]`);
+  btns.forEach(b => b.classList.toggle('active', b.dataset.hookSrc === src));
+  if (uploadArea) uploadArea.style.display = src === 'external' ? '' : 'none';
+}
+
+async function uploadHookVideo(cid) {
+  const inp  = document.getElementById(`hook-file-${cid}`);
+  const file = inp?.files[0];
+  if (!file) return;
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    const res = await fetch(`/api/candidates/${cid}/hook-video`, { method: 'POST', body: fd });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.statusText);
+    toast('Hook video uploaded', 'success');
+    _restartDetailPoll();
+  } catch (e) {
+    toast('Upload failed: ' + e.message, 'error');
+  }
+}
+
+async function removeHookVideo(cid) {
+  try {
+    await api('DELETE', `/candidates/${cid}/hook-video`);
+    toast('Hook video removed — using blur');
+    _restartDetailPoll();
   } catch (e) {
     toast('Error: ' + e.message, 'error');
   }

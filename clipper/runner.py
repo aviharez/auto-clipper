@@ -13,6 +13,8 @@ from dataclasses import asdict
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
+import shutil
+
 import clipper.jobs as db
 from clipper.assembly.individual import IndividualAssembler
 from clipper.candidates.manual import ManualCandidateSource
@@ -56,19 +58,28 @@ def _process_job(job: dict):
         candidates = source.generate(job)
         cand_ids = []
         for idx, c in enumerate(candidates):
+            # Check for pre-staged hook video uploaded from the new-job form
+            staged_hook = JOBS_DIR / job_id / "staged_hooks" / f"{idx}.mp4"
+            hook_background = "external" if staged_hook.exists() else c.hook_background
+
             cid = db.insert_candidate(job_id, idx, {
                 "start": c.start,
                 "end": c.end,
                 "title": c.title,
                 "hook_text": c.hook_text,
                 "hook_enabled": c.hook_enabled,
-                "hook_background": c.hook_background,
+                "hook_background": hook_background,
                 "needs_caption": c.needs_caption,
                 "caption_preset": c.caption_preset,
                 "hook_preset": c.hook_preset,
                 "rank": c.rank,
                 "origin": c.origin,
             })
+
+            if staged_hook.exists():
+                clip_dir = JOBS_DIR / job_id / "clips" / cid
+                shutil.move(str(staged_hook), str(clip_dir / "hook_background.mp4"))
+
             cand_ids.append(cid)
 
         # Stage 3: cut each candidate
