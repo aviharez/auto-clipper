@@ -129,11 +129,13 @@ def _create_hook_segment(
 def _make_hook_blur_self(
     src: str, out: str, ass_rel: str, fonts_rel: str, duration: float, preset: dict
 ):
-    brightness = preset.get("bg_brightness", -0.35)
+    darkness = preset.get("gradient_darkness", 0.75)
+    # Gradient overlay: top 10% untouched; below 10% darkens linearly to darkness at bottom.
+    # factor = 1.0 at y=10%, (1 - darkness) at y=100%.
+    factor = f"if(lt(Y/H,0.1),1,1-min(1,(Y/H-0.1)/0.9)*{darkness:.3f})"
     vf = (
         f"trim=0:{duration},setpts=PTS-STARTPTS,"
-        f"boxblur=luma_radius=25:luma_power=3:chroma_radius=20:chroma_power=3,"
-        f"eq=brightness={brightness},"
+        f"geq=r='r(X,Y)*({factor})':g='g(X,Y)*({factor})':b='b(X,Y)*({factor})',"
         f"setsar=1,"
         f"ass={ass_rel}:fontsdir={fonts_rel}"
     )

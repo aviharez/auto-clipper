@@ -140,49 +140,52 @@ CAPTION_PRESETS = {
 
 DEFAULT_CAPTION_PRESET = "bold_yellow"
 
-# Hook presets — control the blurred teaser segment's text style and bg darkness.
-# bg_brightness: ffmpeg eq brightness adjustment applied to the blurred background
-#   (range roughly -1.0 … 0.0; more negative = darker).
+# Hook presets — control the teaser segment's text style and gradient darkness.
+# gradient_darkness: how much the bottom 90% of the frame is darkened.
+#   0.0 = no darkening; 1.0 = fully black at the very bottom.
+#   Top 10% of the frame is always left untouched (transparent).
+#   The gradient starts at 10% from the top and reaches (1 - gradient_darkness)
+#   brightness at the bottom edge.
 HOOK_PRESETS = {
     "blur_dark": {
-        "font_family": "Montserrat",
-        "font_file": str(FONTS_DIR / "Montserrat-Bold.ttf"),
+        "font_family": "Anton",
+        "font_file": str(FONTS_DIR / "Anton-Regular.ttf"),
         "font_size_pct": 7,
         "text_color": "#FFFFFF",
         "outline_width": 6,
         "shadow": True,
-        "bg_brightness": -0.35,
+        "gradient_darkness": 0.75,
         "transition": "cut",
     },
     "bold_punch": {
-        "font_family": "Montserrat",
-        "font_file": str(FONTS_DIR / "Montserrat-Bold.ttf"),
+        "font_family": "Anton",
+        "font_file": str(FONTS_DIR / "Anton-Regular.ttf"),
         "font_size_pct": 9,
         "text_color": "#FFE000",
         "outline_width": 8,
         "shadow": True,
-        "bg_brightness": -0.50,
+        "gradient_darkness": 0.85,
         "transition": "cut",
     },
     # dark_minimal favours a smooth lead-in → fade suits the polished aesthetic.
     "dark_minimal": {
-        "font_family": "Inter 28pt",
-        "font_file": str(FONTS_DIR / "Inter-28pt-Bold.ttf"),
+        "font_family": "Anton",
+        "font_file": str(FONTS_DIR / "Anton-Regular.ttf"),
         "font_size_pct": 6,
         "text_color": "#FFFFFF",
         "outline_width": 2,
         "shadow": False,
-        "bg_brightness": -0.60,
+        "gradient_darkness": 0.88,
         "transition": "fade",
     },
     "high_contrast": {
-        "font_family": "Montserrat",
-        "font_file": str(FONTS_DIR / "Montserrat-Bold.ttf"),
+        "font_family": "Anton",
+        "font_file": str(FONTS_DIR / "Anton-Regular.ttf"),
         "font_size_pct": 8,
         "text_color": "#FFFFFF",
         "outline_width": 12,
         "shadow": False,
-        "bg_brightness": -0.20,
+        "gradient_darkness": 0.60,
         "transition": "cut",
     },
     # TikTok-style: text in lower half, bold all-caps.
@@ -190,28 +193,28 @@ HOOK_PRESETS = {
     # position="lower" anchors text ~20% from bottom (above UI chrome).
     # Zero brackets is valid — plain styled text, no highlight applied.
     "tiktok_green": {
-        "font_family": "Montserrat",
-        "font_file": str(FONTS_DIR / "Montserrat-Bold.ttf"),
-        "font_size_pct": 5,
+        "font_family": "Anton",
+        "font_file": str(FONTS_DIR / "Anton-Regular.ttf"),
+        "font_size_pct": 8,
         "text_color": "#FFFFFF",
         "highlight_color": "#00FF7F",
-        "outline_width": 6,
+        "outline_width": 7,
         "shadow": False,
-        "bg_brightness": -0.40,
+        "gradient_darkness": 0.80,
         "position": "lower",
         "text_transform": "upper",
-        "margin_h": 20,
-        "transition": "cut",
+        "margin_h": 52,
+        "transition": "fade",
     },
     "tiktok_yellow": {
-        "font_family": "Montserrat",
-        "font_file": str(FONTS_DIR / "Montserrat-Bold.ttf"),
+        "font_family": "Anton",
+        "font_file": str(FONTS_DIR / "Anton-Regular.ttf"),
         "font_size_pct": 5,
         "text_color": "#FFFFFF",
         "highlight_color": "#FFE000",
         "outline_width": 6,
         "shadow": False,
-        "bg_brightness": -0.40,
+        "gradient_darkness": 0.80,
         "position": "lower",
         "text_transform": "upper",
         "margin_h": 20,
@@ -221,15 +224,15 @@ HOOK_PRESETS = {
     # No per-keyword syntax needed — the box frames the whole hook line.
     # slide_up matches the card/reveal motif of the box style.
     "tiktok_box": {
-        "font_family": "Montserrat",
-        "font_file": str(FONTS_DIR / "Montserrat-Bold.ttf"),
+        "font_family": "Anton",
+        "font_file": str(FONTS_DIR / "Anton-Regular.ttf"),
         "font_size_pct": 5,
         "text_color": "#111111",
         "outline_width": 14,
         "shadow": False,
         "border_style": 3,
         "box_color": "#FFFFFF",
-        "bg_brightness": -0.45,
+        "gradient_darkness": 0.82,
         "position": "lower",
         "text_transform": "upper",
         "margin_h": 20,
@@ -282,6 +285,6 @@ REFRAME_SUBJECT_MIN_COVERAGE = 0.55  # a cluster present in >= this frac of a sh
 # support is ever needed.
 WATERMARK_TEXT = "Daily Clip"
 WATERMARK_FONT_FILE = str(FONTS_DIR / "Montserrat-Bold.ttf")
-WATERMARK_FONT_SIZE_FRAC = 0.016    # ~30 px at 1920 height — unobtrusive
+WATERMARK_FONT_SIZE_FRAC = 0.020    # ~30 px at 1920 height — unobtrusive
 WATERMARK_COLOR = "#888888"         # dark-gray, subtle against any background
 WATERMARK_MARGIN_BOTTOM_PX = 160   # gap between text baseline and frame bottom
