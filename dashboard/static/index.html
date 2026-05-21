@@ -3,22 +3,45 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Clip Automation</title>
+  <title>Clipper</title>
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
 
-<header>
-  <h1>✂ Clip Automation</h1>
-  <div class="breadcrumb" id="breadcrumb"></div>
-  <nav class="header-nav">
-    <a href="#" onclick="location.hash='';return false;">Jobs</a>
-    <a href="#history" onclick="location.hash='history';return false;">History</a>
-  </nav>
-</header>
+<div id="shell">
+  <nav id="sidebar">
+    <div class="sidebar-logo">
+      <div class="sidebar-logo-mark">cl</div>
+      <span class="sidebar-logo-name">clipper</span>
+    </div>
 
-<div class="main" id="app">
-  <div class="loading">Loading…</div>
+    <div class="sidebar-nav">
+      <a class="nav-item" id="nav-jobs" data-nav="jobs"
+         href="#" onclick="location.hash='';return false;">
+        <span>Jobs</span>
+        <span class="nav-item-count" id="nav-jobs-count"></span>
+      </a>
+      <a class="nav-item" id="nav-history" data-nav="history"
+         href="#history" onclick="location.hash='history';return false;">
+        <span>History</span>
+        <span class="nav-item-count" id="nav-history-count"></span>
+      </a>
+    </div>
+
+    <div class="sidebar-spacer"></div>
+
+    <div class="sidebar-footer">
+      <div class="worker-status">
+        <span class="worker-dot" id="worker-dot"></span>
+        <span id="worker-text">worker · idle</span>
+      </div>
+      <div class="disk-status" id="disk-status">disk · –</div>
+    </div>
+  </nav>
+
+  <main id="main">
+    <div id="app"></div>
+  </main>
 </div>
 
 <div id="toast-container"></div>

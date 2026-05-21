@@ -3,7 +3,6 @@
 const $ = (sel, ctx = document) => ctx.querySelector(sel);
 const $$ = (sel, ctx = document) => [...ctx.querySelectorAll(sel)];
 const app = document.getElementById('app');
-const breadcrumb = document.getElementById('breadcrumb');
 
 function toast(msg, type = '') {
   const el = document.createElement('div');
@@ -42,8 +41,42 @@ function fmtDate(iso) {
   return new Date(iso).toLocaleString();
 }
 
+function fmtAge(iso) {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1)  return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24)  return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days === 1) return 'yesterday';
+  if (days < 7)  return `${days}d ago`;
+  return new Date(iso).toLocaleDateString();
+}
+
+// Generates a status pill. Replaces the old badge() function — all call sites
+// use the same function name so existing code is unchanged.
 function badge(status) {
-  return `<span class="badge badge-${status}">${status.replace(/_/g, ' ')}</span>`;
+  const label = status.replace(/_/g, ' ');
+  return `<span class="pill pill-${status}"><span class="pill-dot"></span>${label}</span>`;
+}
+
+// ── Sidebar helpers ────────────────────────────────────────────────────────
+
+function setSidebarNav(active) {
+  $$('.nav-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.nav === active);
+  });
+}
+
+function updateWorkerStatus(jobs) {
+  const busy = jobs.some(j => ACTIVE_STATES.has(j.status));
+  const dot  = document.getElementById('worker-dot');
+  const text = document.getElementById('worker-text');
+  if (dot)  dot.classList.toggle('busy', busy);
+  if (text) text.textContent = `worker · ${busy ? 'running' : 'idle'}`;
+  const countEl = document.getElementById('nav-jobs-count');
+  if (countEl) countEl.textContent = jobs.length || '';
 }
 
 // ── Router ─────────────────────────────────────────────────────────────────
@@ -66,7 +99,6 @@ window.addEventListener('load', route);
 
 let _listPoll;
 
-// States that mean something is still in flight and worth polling.
 const ACTIVE_STATES = new Set([
   'pending','downloading','cutting','transcribing',
   'captioning','creating_hook','assembling','uploading',
@@ -75,26 +107,36 @@ const ACTIVE_STATES = new Set([
 async function showJobList() {
   clearTimeout(_listPoll);
   _listPoll = null;
-  breadcrumb.innerHTML = '';
+  setSidebarNav('jobs');
 
   app.innerHTML = `
-    <div class="section-header">
-      <h2>Jobs</h2>
-      <button class="btn btn-primary" id="btn-new">+ New Job</button>
+    <div class="screen-header" style="flex-shrink:0">
+      <div class="screen-header-row">
+        <div>
+          <h1 class="screen-title">Jobs</h1>
+          <div class="screen-subtitle">Running + queued batches. Open one when it's ready.</div>
+        </div>
+        <button class="btn btn-primary" id="btn-new">+ New Job</button>
+      </div>
     </div>
-    <div id="upload-panel" style="display:none" class="card" style="margin-bottom:16px">
+    <div id="upload-panel" style="display:none">
       <div class="upload-area" id="drop-zone">
         <input type="file" id="yaml-input" accept=".yaml,.yml" />
-        <div style="font-size:24px">📄</div>
-        <strong>Drop your clips YAML here</strong>
+        <div style="font-size:22px;margin-bottom:4px">📄</div>
+        <strong style="font-size:13px">Drop your clips YAML here</strong>
         <p>or click to browse</p>
       </div>
       <div style="display:flex;gap:8px;justify-content:flex-end">
-        <button class="btn btn-ghost" id="btn-cancel-upload">Cancel</button>
-        <button class="btn btn-primary" id="btn-submit-upload" disabled>Upload &amp; Process</button>
+        <button class="btn btn-ghost btn-sm" id="btn-cancel-upload">Cancel</button>
+        <button class="btn btn-primary btn-sm" id="btn-submit-upload" disabled>Upload &amp; Process</button>
       </div>
     </div>
-    <div id="job-list-wrap"><div class="loading">Loading jobs…</div></div>
+    <div class="job-table-header" id="job-table-header" style="display:none">
+      <div>Source</div><div>Status</div><div>Clips</div><div>Age</div><div></div>
+    </div>
+    <div class="screen-body" id="job-list-wrap">
+      <div class="loading">Loading jobs…</div>
+    </div>
   `;
 
   $('#btn-new').onclick = () => {
@@ -109,7 +151,7 @@ async function showJobList() {
 }
 
 function setupUpload() {
-  const dropZone = $('#drop-zone');
+  const dropZone  = $('#drop-zone');
   const fileInput = $('#yaml-input');
   const submitBtn = $('#btn-submit-upload');
   let selectedFile = null;
@@ -117,8 +159,8 @@ function setupUpload() {
   dropZone.onclick = () => fileInput.click();
   fileInput.onchange = () => selectFile(fileInput.files[0]);
 
-  dropZone.ondragover = (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); };
-  dropZone.ondragleave = () => dropZone.classList.remove('drag-over');
+  dropZone.ondragover  = (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); };
+  dropZone.ondragleave = ()  => dropZone.classList.remove('drag-over');
   dropZone.ondrop = (e) => {
     e.preventDefault();
     dropZone.classList.remove('drag-over');
@@ -161,25 +203,52 @@ async function renderJobList() {
   if (!wrap) return;
   try {
     const jobs = await api('GET', '/jobs');
+    updateWorkerStatus(jobs);
+
     if (!jobs.length) {
+      const hdr = document.getElementById('job-table-header');
+      if (hdr) hdr.style.display = 'none';
       wrap.innerHTML = '<div class="empty">No jobs yet. Create one with "+ New Job".</div>';
       return;
     }
-    wrap.innerHTML = `<div class="job-list">
-      ${jobs.map(j => `
-        <div class="job-row" data-id="${j.id}" onclick="location.hash='job/${j.id}'">
+
+    const hdr = document.getElementById('job-table-header');
+    if (hdr) hdr.style.display = '';
+
+    wrap.innerHTML = jobs.map(j => {
+      const isActive = ACTIVE_STATES.has(j.status);
+      const clipCount = j.clip_count ?? 0;
+      const approvedCount = j.approved_count ?? 0;
+
+      let outputCell;
+      if (isActive) {
+        outputCell = `
           <div>
-            <div class="job-url" title="${j.source_url}">${j.source_url}</div>
-            <div class="job-meta">${fmtDate(j.created_at)} · ${j.clip_count ?? 0} clips</div>
+            <div class="progress-mini-label">${clipCount} clip${clipCount !== 1 ? 's' : ''}</div>
+            <div class="progress-mini-bar">
+              <div class="progress-mini-fill" style="width:${clipCount ? Math.round((approvedCount/clipCount)*100) : 0}%"></div>
+            </div>
+          </div>`;
+      } else {
+        outputCell = `<div class="job-row-meta">${approvedCount} of ${clipCount} approved</div>`;
+      }
+
+      const url = j.source_url || '';
+      const shortUrl = url.replace(/^https?:\/\/(www\.)?/, '').slice(0, 52);
+
+      return `
+        <div class="job-row" onclick="location.hash='job/${j.id}'">
+          <div>
+            <div class="job-row-title" title="${url}">${shortUrl}</div>
+            <div class="job-row-sub">${fmtDate(j.created_at)}</div>
           </div>
           <div>${badge(j.status)}</div>
-          <div class="job-meta">${j.approved_count ?? 0} approved</div>
-          <div><button class="btn btn-ghost btn-sm">View →</button></div>
-        </div>
-      `).join('')}
-    </div>`;
+          ${outputCell}
+          <div class="job-row-age">${fmtAge(j.created_at)}</div>
+          <div class="job-row-chevron">›</div>
+        </div>`;
+    }).join('');
 
-    // Poll again only if any job is still working.
     clearTimeout(_listPoll);
     _listPoll = null;
     if (jobs.some(j => ACTIVE_STATES.has(j.status))) {
@@ -212,20 +281,25 @@ async function showJobDetail(jobId) {
   _currentJobId = jobId;
   Object.keys(_bsugg).forEach(k => delete _bsugg[k]);
   Object.keys(_presetDirty).forEach(k => delete _presetDirty[k]);
+  setSidebarNav('jobs');
 
-  breadcrumb.innerHTML = `
-    <a href="#" onclick="location.hash='';return false;">Jobs</a>
-    <span>/</span>
-    <span id="bc-title">…</span>
+  app.innerHTML = `
+    <div class="detail-header">
+      <button class="detail-header-back" onclick="location.hash=''">← Jobs</button>
+      <div class="detail-header-divider"></div>
+      <div class="detail-header-main">
+        <div class="detail-header-title">Loading…</div>
+      </div>
+    </div>
+    <div class="screen-body" style="display:flex;align-items:center;justify-content:center">
+      <div class="loading">Loading job…</div>
+    </div>
   `;
 
-  app.innerHTML = `<div class="loading">Loading job…</div>`;
   await renderJobDetail(jobId);
 }
 
 async function renderJobDetail(jobId) {
-  // Skip re-render while any video is playing or paused mid-playback — a full
-  // innerHTML replacement destroys the <video> element and resets its position.
   if ($$('video').some(v => v.currentTime > 0 && !v.ended)) {
     _scheduleDetailPoll(jobId);
     return;
@@ -235,9 +309,7 @@ async function renderJobDetail(jobId) {
     await loadPresets();
     const job = await api('GET', `/jobs/${jobId}`);
 
-    // Poll again only while something is still processing. User actions
-    // (recut, retry, accept suggestion) re-arm via _restartDetailPoll().
-    const jobActive  = ACTIVE_STATES.has(job.status);
+    const jobActive   = ACTIVE_STATES.has(job.status);
     const candsActive = job.candidates?.some(c => ACTIVE_STATES.has(c.status)) ?? false;
     clearTimeout(_detailPoll);
     _detailPoll = null;
@@ -245,47 +317,48 @@ async function renderJobDetail(jobId) {
       _scheduleDetailPoll(jobId);
     }
 
-    const bc = document.getElementById('bc-title');
-    if (bc) bc.textContent = job.source_url.length > 50
-      ? job.source_url.slice(0, 50) + '…' : job.source_url;
+    const meta         = JSON.parse(job.metadata_json || '{}');
+    const title        = meta.title || job.source_url;
+    const hasApproved  = job.candidates?.some(c => c.approved && c.status === 'ready');
+    const approvedCount = job.candidates?.filter(c => c.approved).length ?? 0;
+    const totalCount   = job.candidates?.length ?? 0;
 
-    const meta = JSON.parse(job.metadata_json || '{}');
-    const hasApproved = job.candidates?.some(c => c.approved && c.status === 'ready');
-
-    // Preserve open state of clip bodies before re-render
-    const openIds = new Set(
-      $$('.clip-body.open').map(el => el.dataset.cid)
-    );
+    const openIds = new Set($$('.clip-body.open').map(el => el.dataset.cid));
 
     app.innerHTML = `
-      <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
-        <button class="btn btn-ghost btn-sm" onclick="location.hash=''">← Back</button>
-        <h2 style="font-size:15px;font-weight:600;flex:1">${meta.title || job.source_url}</h2>
+      <div class="detail-header" style="flex-shrink:0">
+        <button class="detail-header-back" onclick="location.hash=''">← Jobs</button>
+        <div class="detail-header-divider"></div>
+        <div class="detail-header-main">
+          <div class="detail-header-title" title="${title}">${title.length > 70 ? title.slice(0, 70) + '…' : title}</div>
+          <div class="detail-header-meta">${fmtDate(job.created_at)} · ${totalCount} clip${totalCount !== 1 ? 's' : ''}</div>
+        </div>
         ${badge(job.status)}
-        ${hasApproved ? `<button class="btn btn-primary" id="btn-publish">↑ Upload Approved</button>` : ''}
-        ${job.status === 'failed' ? `<button class="btn btn-ghost" id="btn-retry">↺ Retry</button>` : ''}
+        <div class="detail-header-stats" style="${totalCount ? '' : 'display:none'}">
+          <div>${approvedCount} of ${totalCount} reviewed</div>
+          <div class="detail-header-approved">${approvedCount} approved</div>
+        </div>
+        ${hasApproved ? `<button class="btn btn-primary btn-sm" id="btn-publish">↑ Upload ${approvedCount} approved</button>` : ''}
+        ${job.status === 'failed' ? `<button class="btn btn-ghost btn-sm" id="btn-retry">↺ Retry</button>` : ''}
       </div>
-      <div class="job-info">
-        <div><span>Status:</span> <strong>${job.status}</strong></div>
-        <div><span>Created:</span> <strong>${fmtDate(job.created_at)}</strong></div>
-        <div><span>Clips:</span> <strong>${job.candidates?.length ?? 0}</strong></div>
-        ${job.error ? `<div style="color:var(--danger)">${job.error.split('\n')[0]}</div>` : ''}
+      <div class="job-info-bar" style="flex-shrink:0">
+        <div>Status: <strong>${job.status}</strong></div>
+        <div>Created: <strong>${fmtDate(job.created_at)}</strong></div>
+        <div>Clips: <strong>${totalCount}</strong></div>
+        ${job.error ? `<div style="color:var(--red)">${job.error.split('\n')[0]}</div>` : ''}
       </div>
-      <div class="clip-list" id="clip-list">
-        ${(job.candidates || []).map(c => renderClipCard(c, openIds.has(c.id))).join('')}
-        ${!job.candidates?.length ? '<div class="empty">No clips yet. Processing may still be running.</div>' : ''}
+      <div class="screen-body">
+        <div class="clip-list" id="clip-list">
+          ${(job.candidates || []).map(c => renderClipCard(c, openIds.has(c.id))).join('')}
+          ${!job.candidates?.length ? '<div class="empty">No clips yet — processing may still be running.</div>' : ''}
+        </div>
       </div>
     `;
 
-    if (hasApproved) {
-      $('#btn-publish').onclick = () => publishJob(jobId);
-    }
+    if (hasApproved) $('#btn-publish').onclick = () => publishJob(jobId);
     const retryBtn = document.getElementById('btn-retry');
-    if (retryBtn) {
-      retryBtn.onclick = () => retryJob(jobId);
-    }
+    if (retryBtn) retryBtn.onclick = () => retryJob(jobId);
 
-    // Attach nudge handlers
     $$('.clip-header').forEach(h => {
       h.onclick = () => {
         const body = h.nextElementSibling;
@@ -312,12 +385,10 @@ async function renderJobDetail(jobId) {
       btn.onclick = () => setApproval(btn.dataset.reject, false, jobId);
     });
 
-    // Nudge buttons
     $$('[data-nudge]').forEach(btn => {
       btn.onclick = () => nudge(btn, jobId);
     });
 
-    // Preset dropdowns
     $$('[data-preset-type]').forEach(sel => {
       sel.onchange = () => changePreset(sel.dataset.cid, sel.dataset.presetType, sel.value, jobId);
     });
@@ -328,20 +399,47 @@ async function renderJobDetail(jobId) {
 }
 
 function renderClipCard(c, forceOpen = false) {
-  const dur = c.end - c.start;
-  const isOpen = forceOpen || c.status === 'failed';
+  const dur          = c.end - c.start;
+  const isOpen       = forceOpen || c.status === 'failed';
   const approvedClass = c.approved ? 'approved' : (c.status === 'rejected' ? 'rejected' : '');
+  const hasVideo     = c.status === 'ready' || c.status === 'approved' || c.status === 'uploaded';
 
-  const hasVideo = c.status === 'ready' || c.status === 'approved' || c.status === 'uploaded';
-
-  const cp = _presets?.caption || {};
-  const cpKeys = Object.keys(cp);
+  const cp       = _presets?.caption || {};
+  const cpKeys   = Object.keys(cp);
   const effectiveHookPreset = c.hook_preset || c.caption_preset;
+
   const presetBlock = cpKeys.length ? `
     <div class="preset-row">
-      ${c.needs_caption ? `<div class="preset-field"><label class="preset-label">Caption</label><select class="preset-select" data-preset-type="caption" data-cid="${c.id}">${_presetOptions(c.caption_preset, cp)}</select></div>` : ''}
-      ${c.hook_enabled && c.hook_text ? `<div class="preset-field"><label class="preset-label">Hook style</label><select class="preset-select" data-preset-type="hook" data-cid="${c.id}">${_presetOptions(effectiveHookPreset, cp)}</select></div>` : ''}
+      ${c.needs_caption
+        ? `<div class="preset-field">
+             <label class="preset-label">Caption</label>
+             <select class="preset-select" data-preset-type="caption" data-cid="${c.id}">
+               ${_presetOptions(c.caption_preset, cp)}
+             </select>
+           </div>`
+        : ''}
+      ${c.hook_enabled && c.hook_text
+        ? `<div class="preset-field">
+             <label class="preset-label">Hook style</label>
+             <select class="preset-select" data-preset-type="hook" data-cid="${c.id}">
+               ${_presetOptions(effectiveHookPreset, cp)}
+             </select>
+           </div>`
+        : ''}
     </div>` : '';
+
+  // Stub placeholders — space reserved for upcoming 2.5 features
+  const stubHookVideo = `
+    <div class="stub-section">
+      <div class="stub-label">Hook video · 2.5.5</div>
+      <div class="stub-body">Custom hook background upload</div>
+    </div>`;
+
+  const stubTranscript = `
+    <div class="stub-section">
+      <div class="stub-label">Transcript editor · 2.5.6</div>
+      <div class="stub-body">Word-by-word correction</div>
+    </div>`;
 
   return `
   <div class="clip-card ${approvedClass}" id="clip-${c.id}">
@@ -355,15 +453,20 @@ function renderClipCard(c, forceOpen = false) {
         <div>
           <div class="clip-video-wrap">
             ${hasVideo
-              ? `<video controls src="/video/${c.id}" preload="metadata"></video>`
+              ? `<video controls src="/video/${c.id}" preload="metadata"></video>
+                 <div class="clip-video-overlay-stub"></div>`
               : `<div class="clip-video-placeholder">${statusMsg(c)}</div>`
             }
           </div>
           ${hasVideo ? `<div class="clip-video-label">${previewLabel(c)}</div>` : ''}
         </div>
+
         <div class="clip-controls">
-          ${c.hook_text ? `<div style="font-size:12px;color:var(--text-muted)">Hook: <em>${c.hook_text}</em></div>` : ''}
+          ${c.hook_text ? `<div style="font-size:11px;color:var(--text-muted)">Hook: <em>${c.hook_text}</em></div>` : ''}
+
           ${presetBlock}
+
+          ${c.hook_enabled ? stubHookVideo : ''}
 
           <div id="bsugg-${c.id}">${renderBsuggHtml(c.id, _bsugg[c.id], c.start, c.end)}</div>
 
@@ -389,14 +492,16 @@ function renderClipCard(c, forceOpen = false) {
             </div>
           </div>
 
+          ${stubTranscript}
+
           <div class="clip-actions">
             <button class="btn btn-ghost btn-sm" data-recut="${c.id}">↻ Regenerate</button>
             ${c.approved
               ? `<button class="btn btn-ghost btn-sm" data-reject="${c.id}">✕ Unapprove</button>`
               : `<button class="btn btn-primary btn-sm" data-approve="${c.id}">✓ Approve</button>
-                 <button class="btn btn-danger btn-sm" data-reject="${c.id}">✕ Reject</button>`
+                 <button class="btn btn-ghost-danger btn-sm" data-reject="${c.id}">✕ Reject</button>`
             }
-            ${c.youtube_url ? `<a href="${c.youtube_url}" target="_blank" class="btn btn-ghost btn-sm">▶ YouTube</a>` : ''}
+            ${c.youtube_url ? `<a href="${c.youtube_url}" target="_blank" class="btn btn-ghost btn-sm" onclick="event.stopPropagation()">▶ YouTube</a>` : ''}
           </div>
 
           ${c.error ? `<div class="clip-error">${c.error}</div>` : ''}
@@ -407,9 +512,9 @@ function renderClipCard(c, forceOpen = false) {
 }
 
 function statusMsg(c) {
-  if (c.status === 'pending') return 'Waiting to cut…';
-  if (c.status === 'cutting') return 'Cutting…';
-  if (c.status === 'failed') return 'Failed';
+  if (c.status === 'pending')    return 'Waiting…';
+  if (c.status === 'cutting')    return 'Cutting…';
+  if (c.status === 'failed')     return 'Failed';
   return 'Not ready';
 }
 
@@ -431,11 +536,11 @@ async function changePreset(cid, type, value, jobId) {
   }
 }
 
-// ── Nudge state (local; committed on Regenerate) ───────────────────────────
+// ── Nudge state ────────────────────────────────────────────────────────────
 
-const _nudge = {};       // cid -> { start, end }
-const _bsugg = {};       // cid -> suggestion object | null (null = fetched, no suggestion)
-const _presetDirty = {}; // cid -> true when preset changed but not yet regenerated
+const _nudge       = {};  // cid -> { start, end }
+const _bsugg       = {};  // cid -> suggestion object | null
+const _presetDirty = {};  // cid -> true when preset changed but not regenerated
 
 // ── Preset cache ───────────────────────────────────────────────────────────
 
@@ -452,21 +557,15 @@ function _presetOptions(selected, presets) {
   ).join('');
 }
 
-function getLocalBounds(cid) {
-  return _nudge[cid] || null;
-}
-
 function nudge(btn, jobId) {
-  const cid = btn.dataset.cid;
+  const cid   = btn.dataset.cid;
   const field = btn.dataset.field;
   const delta = parseFloat(btn.dataset.delta);
 
-  // Grab current displayed value as base
   const startEl = document.getElementById(`start-${cid}`);
   const endEl   = document.getElementById(`end-${cid}`);
 
   if (!_nudge[cid]) {
-    // Parse currently displayed MM:SS values back to seconds
     _nudge[cid] = {
       start: mmssToSecs(startEl.textContent),
       end:   mmssToSecs(endEl.textContent),
@@ -491,15 +590,12 @@ async function triggerRecut(cid, jobId) {
 
   try {
     if (hasBounds) {
-      // Boundary changed — full recut; picks up any preset change from DB too.
       await api('PUT', `/candidates/${cid}/boundaries`, { start: bounds.start, end: bounds.end });
       toast('Recut queued…');
     } else if (hasPreset) {
-      // Preset-only change — re-run caption + hook + assemble, skip cut/transcribe.
       await api('POST', `/candidates/${cid}/restyle`);
       toast('Re-styling queued…');
     } else {
-      // No local changes — force a full recut with current boundaries.
       const startEl = document.getElementById(`start-${cid}`);
       const endEl   = document.getElementById(`end-${cid}`);
       await api('PUT', `/candidates/${cid}/boundaries`, {
@@ -621,6 +717,71 @@ async function acceptBsuggEnd(cid, suggestedEnd, currentStart) {
 
 // ── History page ───────────────────────────────────────────────────────────
 
+let _histAllClips = [];
+
+function groupByDate(clips) {
+  const map     = new Map();
+  const today   = new Date().toDateString();
+  const yest    = new Date(Date.now() - 86400000).toDateString();
+
+  clips.forEach(c => {
+    const d   = new Date(c.job_created_at);
+    const key = d.toDateString();
+    let label;
+    if (key === today) {
+      label = `Today · ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+    } else if (key === yest) {
+      label = `Yesterday · ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+    } else {
+      label = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    }
+    if (!map.has(key)) map.set(key, { label, items: [] });
+    map.get(key).items.push(c);
+  });
+
+  return [...map.values()];
+}
+
+function renderHistoryGrid(clips) {
+  const wrap = document.getElementById('hist-list');
+  if (!wrap) return;
+
+  if (!clips.length) {
+    wrap.innerHTML = '<div class="empty">No clips found.</div>';
+    return;
+  }
+
+  const groups = groupByDate(clips);
+  wrap.innerHTML = groups.map(g => `
+    <div class="hist-date-group">
+      <div class="hist-date-header">
+        <span class="hist-date-label">${g.label}</span>
+        <span class="hist-date-count">${g.items.length} clip${g.items.length !== 1 ? 's' : ''}</span>
+      </div>
+      <div class="hist-grid">
+        ${g.items.map(c => {
+          const status = c.approved ? 'approved' : c.status;
+          const src = c.source_url || '';
+          const shortSrc = src.replace(/^https?:\/\/(www\.)?/, '').slice(0, 36);
+          return `
+            <div class="hist-card" data-job-id="${c.job_id}">
+              <div class="hist-card-thumb">
+                <div class="hist-thumb-pattern"></div>
+                <div class="hist-card-status">${badge(status)}</div>
+              </div>
+              <div class="hist-card-title">${c.title}</div>
+              <div class="hist-card-source" title="${src}">${shortSrc}</div>
+            </div>`;
+        }).join('')}
+      </div>
+    </div>
+  `).join('');
+
+  $$('.hist-card[data-job-id]').forEach(card => {
+    card.onclick = () => { location.hash = 'job/' + card.dataset.jobId; };
+  });
+}
+
 async function showHistory() {
   clearTimeout(_listPoll);
   _listPoll = null;
@@ -628,28 +789,38 @@ async function showHistory() {
   _detailPoll = null;
   _currentJobId = null;
   Object.keys(_bsugg).forEach(k => delete _bsugg[k]);
-
-  breadcrumb.innerHTML = '';
+  setSidebarNav('history');
 
   app.innerHTML = `
-    <div class="section-header">
-      <h2>History</h2>
+    <div class="screen-header" style="flex-shrink:0">
+      <div class="screen-header-row">
+        <div>
+          <h1 class="screen-title">History</h1>
+          <div class="screen-subtitle">Every clip produced. Scan to avoid re-clipping the same moment.</div>
+        </div>
+      </div>
+      <div class="history-filters">
+        <div class="filter-search">
+          <span style="color:var(--text-dim);font-size:12px">⌕</span>
+          <input id="hist-search" placeholder="Search title or source…" autocomplete="off" />
+        </div>
+        <select id="hist-source" class="filter-select">
+          <option value="">All sources</option>
+        </select>
+        <select id="hist-status" class="filter-select">
+          <option value="">All statuses</option>
+          <option value="ready">Ready</option>
+          <option value="approved">Approved</option>
+          <option value="uploaded">Uploaded</option>
+          <option value="failed">Failed</option>
+          <option value="rejected">Rejected</option>
+        </select>
+        <button class="btn btn-ghost btn-sm" id="hist-clear">Clear</button>
+      </div>
     </div>
-    <div class="filter-bar">
-      <select id="hist-source" class="filter-select">
-        <option value="">All sources</option>
-      </select>
-      <select id="hist-status" class="filter-select">
-        <option value="">All statuses</option>
-        <option value="ready">Ready</option>
-        <option value="approved">Approved</option>
-        <option value="uploaded">Uploaded</option>
-        <option value="failed">Failed</option>
-        <option value="rejected">Rejected</option>
-      </select>
-      <button class="btn btn-ghost btn-sm" id="hist-clear">Clear filters</button>
+    <div class="history-content" id="hist-list">
+      <div class="loading">Loading…</div>
     </div>
-    <div id="hist-list"><div class="loading">Loading…</div></div>
   `;
 
   try {
@@ -658,27 +829,34 @@ async function showHistory() {
     sources.forEach(s => {
       const opt = document.createElement('option');
       opt.value = s;
-      opt.textContent = s.length > 60 ? s.slice(0, 60) + '…' : s;
+      opt.textContent = s.replace(/^https?:\/\/(www\.)?/, '').slice(0, 60);
       sel.appendChild(opt);
     });
   } catch {}
 
-  const apply = () => renderHistoryList();
-  $('#hist-source').onchange = apply;
-  $('#hist-status').onchange = apply;
+  const rerender = () => renderHistoryList();
+
+  $('#hist-source').onchange = rerender;
+  $('#hist-status').onchange = rerender;
+  $('#hist-search').oninput  = () => {
+    const q = $('#hist-search').value.toLowerCase();
+    const filtered = q
+      ? _histAllClips.filter(c =>
+          c.title.toLowerCase().includes(q) || (c.source_url || '').toLowerCase().includes(q))
+      : _histAllClips;
+    renderHistoryGrid(filtered);
+  };
   $('#hist-clear').onclick = () => {
     $('#hist-source').value = '';
     $('#hist-status').value = '';
-    apply();
+    $('#hist-search').value = '';
+    rerender();
   };
 
   await renderHistoryList();
 }
 
 async function renderHistoryList() {
-  const wrap = $('#hist-list');
-  if (!wrap) return;
-
   const source = $('#hist-source')?.value || '';
   const status = $('#hist-status')?.value || '';
 
@@ -689,33 +867,20 @@ async function renderHistoryList() {
   try {
     const res = await fetch('/api/history' + (qs.toString() ? '?' + qs : ''));
     if (!res.ok) throw new Error(res.statusText);
-    const clips = await res.json();
+    _histAllClips = await res.json();
 
-    if (!clips.length) {
-      wrap.innerHTML = '<div class="empty">No clips found.</div>';
-      return;
-    }
+    const navCountEl = document.getElementById('nav-history-count');
+    if (navCountEl) navCountEl.textContent = _histAllClips.length || '';
 
-    wrap.innerHTML = `
-      <div class="hist-list-inner">
-        ${clips.map(c => `
-          <div class="hist-card" onclick="location.hash='job/${c.job_id}'" title="Open job">
-            <div class="hist-card-main">
-              <div class="hist-title">${c.title}</div>
-              <div class="hist-source" title="${c.source_url}">${c.source_url.length > 65 ? c.source_url.slice(0, 65) + '…' : c.source_url}</div>
-            </div>
-            <div class="hist-card-side">
-              <div class="hist-meta">${fmtDate(c.job_created_at)} · ${fmtDuration(c.end - c.start)}</div>
-              <div style="display:flex;align-items:center;gap:8px">
-                ${badge(c.approved ? 'approved' : c.status)}
-                ${c.youtube_url ? `<a href="${c.youtube_url}" target="_blank" class="btn btn-ghost btn-sm" onclick="event.stopPropagation()">▶ YouTube</a>` : ''}
-              </div>
-            </div>
-          </div>
-        `).join('')}
-      </div>
-    `;
+    const q = $('#hist-search')?.value?.toLowerCase() || '';
+    const filtered = q
+      ? _histAllClips.filter(c =>
+          c.title.toLowerCase().includes(q) || (c.source_url || '').toLowerCase().includes(q))
+      : _histAllClips;
+
+    renderHistoryGrid(filtered);
   } catch (e) {
+    const wrap = document.getElementById('hist-list');
     if (wrap) wrap.innerHTML = `<div class="empty">Error: ${e.message}</div>`;
   }
 }
