@@ -68,7 +68,8 @@
       "Bash(rtk ps *)",
       "Bash(curl -s -o /tmp/app_js_live.js http://localhost:8000/static/app.js)",
       "Bash(where ffprobe *)",
-      "Bash(powershell *)"
+      "Bash(powershell *)",
+      "Bash(Remove-Item *)"
     ]
   }
 }

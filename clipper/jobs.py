@@ -30,6 +30,7 @@ def _migrate(conn: sqlite3.Connection):
         ("jobs", "channel_name", "TEXT"),
         ("jobs", "download_progress", "INTEGER"),
         ("candidates", "hook_duration", "REAL"),
+        ("candidates", "delivery_url", "TEXT"),
     ]
     for table, col, col_type in new_cols:
         try:
@@ -74,6 +75,7 @@ def init_db():
                 error           TEXT,
                 output_path     TEXT,
                 approved        INTEGER NOT NULL DEFAULT 0,
+                delivery_url    TEXT,
                 youtube_url     TEXT,
                 FOREIGN KEY (job_id) REFERENCES jobs(id)
             );

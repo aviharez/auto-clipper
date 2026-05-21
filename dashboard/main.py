@@ -16,8 +16,19 @@ from pydantic import BaseModel
 
 import clipper.jobs as db
 from clipper import runner
-from clipper.config import CAPTION_PRESETS, DEFAULT_CAPTION_PRESET, HOOK_PRESETS, DEFAULT_HOOK_PRESET, JOBS_DIR, DATA_DIR
-from clipper.stages import publish as publish_stage
+from clipper.config import (
+    CAPTION_PRESETS, DEFAULT_CAPTION_PRESET,
+    HOOK_PRESETS, DEFAULT_HOOK_PRESET,
+    JOBS_DIR, DATA_DIR,
+    DEFAULT_DELIVERER,
+)
+from clipper.delivery.local import LocalDeliverer
+from clipper.delivery.gdrive import GDriveDeliverer
+
+_DELIVERERS = {
+    "local": LocalDeliverer(),
+    "gdrive": GDriveDeliverer(),
+}
 
 log = logging.getLogger(__name__)
 
@@ -462,32 +473,56 @@ def api_history_sources():
     return db.list_unique_sources()
 
 
-# ── API: Publish ──────────────────────────────────────────────────────────────
+# ── API: Deliverers ───────────────────────────────────────────────────────────
 
 
-@app.post("/api/jobs/{job_id}/publish")
-def api_publish(job_id: str):
+@app.get("/api/deliverers")
+def api_list_deliverers():
+    return {
+        "deliverers": [
+            {"id": "local",  "label": "Local folder"},
+            {"id": "gdrive", "label": "Google Drive (rclone)"},
+        ],
+        "default": DEFAULT_DELIVERER,
+    }
+
+
+# ── API: Deliver ──────────────────────────────────────────────────────────────
+
+
+class DeliverBody(BaseModel):
+    deliverer: Optional[str] = None  # null → use DEFAULT_DELIVERER
+
+
+@app.post("/api/jobs/{job_id}/deliver")
+def api_deliver(job_id: str, body: DeliverBody = DeliverBody()):
     job = db.get_job(job_id)
     if not job:
         raise HTTPException(404, "Job not found")
 
+    deliverer_id = body.deliverer or DEFAULT_DELIVERER
+    deliverer = _DELIVERERS.get(deliverer_id)
+    if not deliverer:
+        raise HTTPException(400, f"Unknown deliverer: {deliverer_id!r}. Choose 'local' or 'gdrive'.")
+
     candidates = db.get_candidates(job_id)
     approved = [c for c in candidates if c["approved"] and c["status"] == "ready"]
     if not approved:
-        raise HTTPException(400, "No approved clips ready to upload")
+        raise HTTPException(400, "No approved clips ready to deliver")
 
     results = []
-    db.update_job(job_id, status="uploading")
+    db.update_job(job_id, status="delivering")
     for c in approved:
         try:
-            db.update_candidate(c["id"], status="uploading")
-            url = publish_stage.run(c)
-            db.update_candidate(c["id"], status="uploaded", youtube_url=url)
-            results.append({"id": c["id"], "title": c["title"], "url": url})
+            db.update_candidate(c["id"], status="delivering")
+            clip_path = Path(c["output_path"])
+            status = deliverer.deliver(clip_path, job, c)
+            db.update_candidate(c["id"], status=status, delivery_url=str(clip_path))
+            results.append({"id": c["id"], "title": c["title"], "status": status})
         except Exception as e:
             db.update_candidate(c["id"], status="failed", error=str(e))
             results.append({"id": c["id"], "title": c["title"], "error": str(e)})
 
-    all_uploaded = all("url" in r for r in results)
-    db.update_job(job_id, status="done" if all_uploaded else "ready_for_review")
+    all_delivered = all("error" not in r for r in results)
+    db.update_job(job_id, status="done" if all_delivered else "ready_for_review")
     return {"results": results}

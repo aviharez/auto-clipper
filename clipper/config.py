@@ -24,9 +24,24 @@ BRANDING_FONT_FILE = str(FONTS_DIR / "Montserrat-Bold.ttf")
 BRANDING_FONT_FAMILY = "Montserrat"
 BRANDING_FONT_SIZE_FRAC = 0.019     # channel name font size as fraction of CLIP_HEIGHT (~36px)
 
-YOUTUBE_CREDENTIALS_FILE = BASE_DIR / "credentials" / "client_secret.json"
-YOUTUBE_TOKEN_FILE = BASE_DIR / "credentials" / "token.json"
-YOUTUBE_SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+# Delivery (§2.7).
+# User-configurable via environment variables or by editing the values below.
+import os as _os
+
+# Local deliverer — target folder on this machine.
+DELIVERY_LOCAL_OUTPUT_DIR = (
+    Path(_os.environ["DELIVERY_LOCAL_OUTPUT_DIR"])
+    if _os.environ.get("DELIVERY_LOCAL_OUTPUT_DIR")
+    else Path.home() / "Documents" / "clipper-output"
+)
+
+# Google Drive deliverer — rclone remote name and destination folder.
+# Run 'rclone config' once to set up the remote, then set these values.
+GDRIVE_RCLONE_REMOTE = _os.environ.get("GDRIVE_RCLONE_REMOTE", "gdrive")
+GDRIVE_DESTINATION_FOLDER = _os.environ.get("GDRIVE_DESTINATION_FOLDER", "clipper-output")
+
+# Which deliverer to use by default: "local" or "gdrive".
+DEFAULT_DELIVERER = _os.environ.get("DEFAULT_DELIVERER", "local")
 
 # Target clip resolution (9:16 vertical)
 CLIP_WIDTH = 1080

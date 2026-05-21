@@ -699,6 +699,24 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .detail-header-approved { color: var(--green); margin-top: 2px; }
 
+.deliver-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.deliver-select {
+  height: 30px;
+  padding: 0 6px;
+  font-size: 11px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--text);
+  cursor: pointer;
+}
+.deliver-select:focus { outline: none; border-color: var(--accent); }
+
 /* ── Job info bar ────────────────────────────────────────────────────────── */
 
 .job-info-bar {

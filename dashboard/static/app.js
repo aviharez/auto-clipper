@@ -101,7 +101,7 @@ let _listPoll;
 
 const ACTIVE_STATES = new Set([
   'pending','downloading','cutting','transcribing',
-  'captioning','creating_hook','assembling','uploading',
+  'captioning','creating_hook','assembling','delivering',
 ]);
 
 async function showJobList() {
@@ -647,7 +647,11 @@ async function renderJobDetail(jobId) {
           <div>${approvedCount} of ${totalCount} reviewed</div>
           <div class="detail-header-approved">${approvedCount} approved</div>
         </div>
-        ${hasApproved ? `<button class="btn btn-primary btn-sm" id="btn-publish">↑ Upload ${approvedCount} approved</button>` : ''}
+        ${hasApproved ? `
+          <div class="deliver-group" id="deliver-group">
+            <select class="deliver-select" id="deliver-select"></select>
+            <button class="btn btn-primary btn-sm" id="btn-deliver">↑ Deliver ${approvedCount}</button>
+          </div>` : ''}
         ${job.status === 'failed' ? `<button class="btn btn-ghost btn-sm" id="btn-retry">↺ Retry</button>` : ''}
         ${job.error ? `<div style="color:var(--red);font-size:11px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escAttr(job.error)}">${job.error.split('\n')[0]}</div>` : ''}
       </div>
@@ -674,7 +678,13 @@ async function renderJobDetail(jobId) {
       </div>
     `;
 
-    if (hasApproved) document.getElementById('btn-publish').onclick = () => publishJob(jobId);
+    if (hasApproved) {
+      populateDelivererSelect();
+      document.getElementById('btn-deliver').onclick = () => {
+        const sel = document.getElementById('deliver-select');
+        deliverJob(jobId, sel?.value || null);
+      };
+    }
     const retryBtn = document.getElementById('btn-retry');
     if (retryBtn) retryBtn.onclick = () => retryJob(jobId);
 
@@ -773,7 +783,7 @@ function renderClipListItem(c, idx, isActive) {
 function renderClipCenterHtml(c, idx, total) {
   if (!c) return `<div class="empty" style="padding-top:80px">No clips yet — processing…</div>`;
   const dur      = c.end - c.start;
-  const hasVideo = c.status === 'ready' || c.approved || c.status === 'uploaded';
+  const hasVideo = c.status === 'ready' || c.approved || c.status === 'delivered_local';
   return `
     <div class="clip-center-meta">
       <div class="clip-center-number">Clip ${String(idx + 1).padStart(2, '0')} of ${String(total).padStart(2, '0')}</div>
@@ -795,11 +805,11 @@ function renderClipCenterHtml(c, idx, total) {
     </div>
     ${hasVideo ? `<div class="clip-center-video-label">${previewLabel(c)}</div>` : ''}
     ${c.hook_text ? `<div style="margin-top:8px;font-size:11px;color:var(--text-muted);max-width:300px;width:100%">Hook: <em>${c.hook_text}</em></div>` : ''}
-    ${c.youtube_url ? `<a href="${c.youtube_url}" target="_blank" class="btn btn-ghost btn-sm" style="margin-top:10px" onclick="event.stopPropagation()">▶ YouTube</a>` : ''}`;
+    ${c.delivery_url ? `<span style="margin-top:10px;font-size:10px;color:var(--text-muted)">✓ Delivered</span>` : ''}`;
 }
 
 function renderClipControlsHtml(c) {
-  const hasVideo = c.status === 'ready' || c.approved || c.status === 'uploaded';
+  const hasVideo = c.status === 'ready' || c.approved || c.status === 'delivered_local';
 
   // Show nudge values preserved from any pending nudge state
   const dispStart = fmtSecs(_nudge[c.id]?.start ?? c.start);
@@ -1120,16 +1130,35 @@ async function retryJob(jobId) {
   }
 }
 
-async function publishJob(jobId) {
+// ── Deliverer selector ────────────────────────────────────────────────────
+
+let _deliverers = null;
+
+async function loadDeliverers() {
+  if (_deliverers) return;
+  try { _deliverers = await api('GET', '/deliverers'); } catch { _deliverers = { deliverers: [{id:'local',label:'Local folder'}], default: 'local' }; }
+}
+
+async function populateDelivererSelect() {
+  await loadDeliverers();
+  const sel = document.getElementById('deliver-select');
+  if (!sel || !_deliverers) return;
+  sel.innerHTML = _deliverers.deliverers.map(d =>
+    `<option value="${d.id}"${d.id === _deliverers.default ? ' selected' : ''}>${d.label}</option>`
+  ).join('');
+}
+
+async function deliverJob(jobId, delivererId) {
   try {
-    const res = await api('POST', `/jobs/${jobId}/publish`);
-    const ok  = res.results.filter(r => r.url).length;
+    const body = delivererId ? { deliverer: delivererId } : {};
+    const res = await api('POST', `/jobs/${jobId}/deliver`, body);
+    const ok  = res.results.filter(r => !r.error).length;
     const bad = res.results.filter(r => r.error).length;
-    if (ok)  toast(`${ok} clip(s) uploaded!`, 'success');
-    if (bad) toast(`${bad} upload(s) failed`, 'error');
+    if (ok)  toast(`${ok} clip(s) delivered!`, 'success');
+    if (bad) toast(`${bad} delivery failure(s)`, 'error');
     await renderJobDetail(jobId);
   } catch (e) {
-    toast('Publish error: ' + e.message, 'error');
+    toast('Delivery error: ' + e.message, 'error');
   }
 }
 
@@ -1416,7 +1445,8 @@ async function showHistory() {
           <option value="">All statuses</option>
           <option value="ready">Ready</option>
           <option value="approved">Approved</option>
-          <option value="uploaded">Uploaded</option>
+          <option value="delivered_local">Delivered (local)</option>
+          <option value="delivered_gdrive">Delivered (Drive)</option>
           <option value="failed">Failed</option>
           <option value="rejected">Rejected</option>
         </select>
