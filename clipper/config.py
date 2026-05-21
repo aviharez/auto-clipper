@@ -2,6 +2,11 @@ import os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).parent.parent
+
+# Ensure ffmpeg/ffprobe are on PATH for all subprocess calls in this process.
+_FFMPEG_BIN = Path(r"C:\ffmpeg\bin")
+if _FFMPEG_BIN.exists() and str(_FFMPEG_BIN) not in os.environ.get("PATH", ""):
+    os.environ["PATH"] = str(_FFMPEG_BIN) + os.pathsep + os.environ.get("PATH", "")
 DATA_DIR = BASE_DIR / "data"
 DB_PATH = DATA_DIR / "jobs.db"
 JOBS_DIR = DATA_DIR / "jobs"
@@ -81,14 +86,14 @@ CAPTION_PRESETS = {
         "words_on_screen": 3,
         "font_file": str(FONTS_DIR / "Montserrat-Bold.ttf"),
         "font_family": "Montserrat",
-        "font_size_pct": 7,
+        "font_size_pct": 4,
         "color_normal": "#FFFFFF",
         "color_active": "#00FF7F",
         "outline_color": "#000000",
-        "outline_width": 6,
+        "outline_width": 4,
         "shadow": True,
         "position_from_bottom_pct": 30,
-        "pop_animation": True,
+        "pop_animation": False,
     },
     "fire_orange": {
         "words_on_screen": 2,
@@ -132,6 +137,7 @@ HOOK_PRESETS = {
         "outline_width": 6,
         "shadow": True,
         "bg_brightness": -0.35,
+        "transition": "cut",
     },
     "bold_punch": {
         "font_family": "Montserrat",
@@ -141,7 +147,9 @@ HOOK_PRESETS = {
         "outline_width": 8,
         "shadow": True,
         "bg_brightness": -0.50,
+        "transition": "cut",
     },
+    # dark_minimal favours a smooth lead-in → fade suits the polished aesthetic.
     "dark_minimal": {
         "font_family": "Inter 28pt",
         "font_file": str(FONTS_DIR / "Inter-28pt-Bold.ttf"),
@@ -150,6 +158,7 @@ HOOK_PRESETS = {
         "outline_width": 2,
         "shadow": False,
         "bg_brightness": -0.60,
+        "transition": "fade",
     },
     "high_contrast": {
         "font_family": "Montserrat",
@@ -159,6 +168,7 @@ HOOK_PRESETS = {
         "outline_width": 12,
         "shadow": False,
         "bg_brightness": -0.20,
+        "transition": "cut",
     },
     # TikTok-style: text in lower half, bold all-caps.
     # Mark highlighted words/phrases in hook_text with [brackets]: "PERCAYA [NGGAK]?"
@@ -176,6 +186,7 @@ HOOK_PRESETS = {
         "position": "lower",
         "text_transform": "upper",
         "margin_h": 20,
+        "transition": "cut",
     },
     "tiktok_yellow": {
         "font_family": "Montserrat",
@@ -189,9 +200,11 @@ HOOK_PRESETS = {
         "position": "lower",
         "text_transform": "upper",
         "margin_h": 20,
+        "transition": "fade",
     },
     # tiktok_box: entire line on a white box (BorderStyle=3), dark text.
     # No per-keyword syntax needed — the box frames the whole hook line.
+    # slide_up matches the card/reveal motif of the box style.
     "tiktok_box": {
         "font_family": "Montserrat",
         "font_file": str(FONTS_DIR / "Montserrat-Bold.ttf"),
@@ -205,6 +218,7 @@ HOOK_PRESETS = {
         "position": "lower",
         "text_transform": "upper",
         "margin_h": 20,
+        "transition": "slide_up",
     },
 }
 
@@ -246,3 +260,13 @@ REFRAME_CUT_REFINE_MARGIN = 0.20     # the 5fps scan locates a cut only to its ~
 REFRAME_CLUSTER_GAP_FRAC = 0.12      # cx gap > this frac of width separates face clusters
 REFRAME_SUBJECT_MIN_COVERAGE = 0.55  # a cluster present in >= this frac of a shot's frames
                                      # is a real subject (else: detector noise)
+
+# ── Watermark (§2.6.4) ────────────────────────────────────────────────────────
+# Small bottom-center text on every clip, starting after the hook segment.
+# Single-channel tool: text lives here. Promote to a batch input if multi-channel
+# support is ever needed.
+WATERMARK_TEXT = "Daily Clip"
+WATERMARK_FONT_FILE = str(FONTS_DIR / "Montserrat-Bold.ttf")
+WATERMARK_FONT_SIZE_FRAC = 0.016    # ~30 px at 1920 height — unobtrusive
+WATERMARK_COLOR = "#888888"         # dark-gray, subtle against any background
+WATERMARK_MARGIN_BOTTOM_PX = 160   # gap between text baseline and frame bottom

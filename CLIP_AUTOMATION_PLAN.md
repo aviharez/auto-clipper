@@ -103,7 +103,11 @@ clipper/
     cut.py           # ffmpeg -> per-candidate clip, PRECISE (re-encode), 9:16 reframe
     hook.py          # build 2-4s opener segment, prepend to main clip
     caption.py       # burn word-level "viral style" captions (ASS-based)
-    publish.py       # YouTube Data API, scheduled
+  delivery/          # swappable seam — moves finished clip to its destination
+    base.py          # Deliverer interface: .deliver(clip_file, job) -> status
+    local.py         # copy to user-configured output folder (BUILD FIRST; default)
+    gdrive.py        # rclone-based upload to Google Drive (added in 2.7.2)
+    # NOTE: pre-2.7 there was a stages/publish.py (YouTube Data API). Retired in 2.7.
   assembly/          # final render step — swappable; runs AFTER candidates are cut/styled
     base.py          # Assembler interface: .assemble(styled_clips, job) -> output(s)
     individual.py    # each candidate -> its own video  (BUILD FIRST; default)
@@ -570,8 +574,9 @@ Number cards in ranked mode are the assembler's concern, not the caption/hook st
 - `stages/cut.py` with **precise re-encode** + **Tier 1 fixed center crop**
 - `assembly/individual.py` (the only assembler in initial scope)
 - `dashboard/` as a **local FastAPI web app** + preview + **Layer 2 manual nudge only**
-- `stages/publish.py` (manual trigger acceptable here)
-- Goal: a real clip goes in as a timestamp and comes out uploaded. No captions, no hook,
+- `stages/publish.py` (manual trigger acceptable here) — NOTE: this was the
+  Iteration-1 build; refactored to `delivery/local.py` in Iteration 2.7
+- Goal: a real clip goes in as a timestamp and comes out delivered. No captions, no hook,
   no tracking yet.
 
 **Iteration 2 — make it look professional.**
@@ -847,6 +852,82 @@ config value gives the same flexibility for the user (one place to change it) wi
 none of the UI clutter. Promoting to an input field is a one-line change when
 multi-channel actually exists — premature flexibility is not free.
 
+**Iteration 2.7 — Delivery refactor (publish → delivery seam).**
+
+> Added after the user realized their actual workflow uploads to multiple social
+> platforms (not only YouTube), and they need the finished clip available for
+> manual upload from devices other than the laptop. The existing `publish.py`
+> (YouTube Data API) is replaced by a swappable `delivery/` seam — same pattern
+> as `Transcriber`, `CandidateSource`, `Assembler`, and scoring signals. Two
+> implementations are built; YouTube auto-publish is retired (was never the
+> actual delivery target in practice).
+
+> **Terminology note.** Earlier sections of this document (§1, §2, §8, build
+> order, ledger) still mention `publish` / `publish.py` / `uploaded` in their
+> original Iteration-1 wording. Those references are preserved as historical
+> context — they describe the system as it was when those decisions were made.
+> From Iteration 2.7 forward, the current vocabulary is `delivery` / `delivered`
+> (with per-deliverer suffixes like `delivered_local`, `delivered_gdrive`). When
+> reading the document, treat any `publish` reference outside of §2.7 as
+> historical; the active stage name is `delivery`.
+
+- **Step 2.7.1 — Refactor `publish.py` into `delivery/` seam with `local.py`
+  only.** Create `delivery/base.py` defining a `Deliverer` interface
+  (`.deliver(clip_file, job) -> status`). Create `delivery/local.py` that copies
+  the finished clip file from the job working directory to a user-configured
+  output folder (e.g. `~/clipper-output/`). Folder path lives in `config.py`.
+  Remove `stages/publish.py` and remove the YouTube Data API dependency entirely
+  — it is not used. Update the runner to call `delivery/` instead of `publish`.
+  Update history status vocabulary: `uploaded` → `delivered` (and consider a
+  per-deliverer suffix like `delivered_local`, future-proof for `delivered_gdrive`).
+  The dashboard "Upload approved" button becomes "Deliver approved." Build and
+  test this alone first — the seam must work end-to-end with the simplest
+  possible deliverer before adding any cloud target.
+
+- **Step 2.7.2 — Add `delivery/gdrive.py` for multi-device access.** Implement a
+  Google Drive deliverer using **rclone** as the transport layer
+  (`rclone copy <clip_file> gdrive:<folder>`). The user installs and configures
+  rclone once outside the app (`rclone config`); the app shells out to rclone
+  commands. Configuration in `config.py`: which rclone remote to use, which
+  destination folder. Per-batch (or eventually per-clip) selector in the
+  dashboard for which deliverer to use; default selectable in `config.py`.
+  History gains `delivered_gdrive` status.
+
+**Locked rationale (delivery seam, not just renaming `publish`).** The existing
+`publish.py` name is wrong for the new behavior — the clip is not being
+published anywhere, it is being moved to a location for the user to upload
+manually. Beyond naming, the future-likely need (auto-upload to TikTok,
+Instagram Reels, etc.) is a list of additional targets, each with its own auth
+and upload semantics. A swappable seam is the right shape for "N delivery
+targets, each independent." Same architecture pattern as the rest of the system
+— consistency matters for the next person (or future-you) reading the code.
+
+**Locked rationale (`local.py` first, not `gdrive.py` directly).** Building
+`local.py` first proves the seam contract works end-to-end with the simplest
+possible implementation — copy a file. If something is wrong with the
+runner-to-deliverer wiring, status updates, or interface design, debug it once
+in a deliverer where the only thing that can fail is `shutil.copy`. Then
+`gdrive.py` only has to debug rclone-specific issues, not seam-design issues
+plus rclone issues simultaneously. Same "prove the simple thing before stacking
+the next" discipline that carried every prior iteration.
+
+**Locked rationale (rclone over Google Drive API direct).** Drive API direct
+integration requires Google Cloud Console setup, OAuth credentials, refresh
+token handling, and periodic re-auth — significant ongoing maintenance for a
+personal tool. rclone handles all of that with a one-time `rclone config`
+outside the app; the app just shells out to commands. Bonus: changing
+destination later (Dropbox, S3, OneDrive) is a config change in rclone, not
+new code in the app. Trade: one external dependency (rclone) the user must
+install. For a single-user tool this trade is correct; for a product shipped
+to many users it would not be.
+
+**Locked rationale (retire YouTube auto-publish entirely).** Keeping the
+YouTube API integration "just in case" would be cargo code — currently
+unused, requiring maintenance (API client, auth) for hypothetical future use.
+If YouTube direct upload is ever genuinely wanted, it returns as
+`delivery/youtube.py` with the same shape as other deliverers. Removing it
+now is cheap; carrying it forever is not.
+
 **Iteration 3 — SKIPPED by user decision (no LLM budget).**
 
 > User chose not to build auto mode due to ongoing LLM API cost. This is an
@@ -925,6 +1006,10 @@ must not compete with proving the core loop.
 | 42 | Watermark visible from `hook_duration` to end, not during hook | Hook is its own visual segment; watermark belongs to content body |
 | 43 | Hook highlight uses inline `[...]` syntax in hook_text | Inline = no desync risk; literal text always matches |
 | 44 | No cap on highlight count per hook | Single-user tool; review loop self-corrects; cap adds complexity for no payoff |
+| 45 | `publish.py` retired; replaced by `delivery/` swappable seam | Multi-platform reality + manual upload workflow; seam matches other system patterns |
+| 46 | `delivery/local.py` built before `delivery/gdrive.py` | Proves seam contract with simplest impl before adding cloud transport |
+| 47 | Google Drive via rclone shell-out, not Drive API direct | Personal tool: OAuth/refresh maintenance avoided; bonus = portable to other clouds |
+| 48 | YouTube Data API integration removed entirely, not kept "just in case" | Cargo code; if needed later, returns as `delivery/youtube.py` |
 
 ---
 

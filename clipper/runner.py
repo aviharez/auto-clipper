@@ -19,7 +19,7 @@ import clipper.jobs as db
 from clipper.assembly.individual import IndividualAssembler
 from clipper.candidates.manual import ManualCandidateSource
 from clipper.config import JOBS_DIR
-from clipper.stages import branding, caption, cut, hook, ingest
+from clipper.stages import branding, caption, cut, hook, ingest, watermark
 from clipper.transcribe.api import AssemblyAITranscriber
 
 log = logging.getLogger(__name__)
@@ -130,6 +130,7 @@ def _cut_and_assemble(job: dict, cand_id: str):
             hook.run(job, cand_id, candidate)
 
         branding.run(job, cand_id, candidate)
+        watermark.run(job, cand_id, candidate)
 
         final_path = _assembler.assemble(cand_id, job, candidate)
         db.update_candidate(cand_id, status="ready", output_path=final_path)
@@ -185,6 +186,7 @@ def _restyle(job: dict, cand_id: str, stage: str):
                 hook.run(job, cand_id, candidate)
 
         branding.run(job, cand_id, candidate)
+        watermark.run(job, cand_id, candidate)
 
         final_path = _assembler.assemble(cand_id, job, candidate)
         db.update_candidate(cand_id, status="ready", output_path=final_path)

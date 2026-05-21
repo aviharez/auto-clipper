@@ -65,8 +65,9 @@ def run(job: dict, cand_id: str, candidate: dict) -> Optional[str]:
         duration=hook_duration,
         preset=preset,
     )
-    _concatenate(str(hook_out), str(main_clip), str(out_path))
-    log.info("Hook prepended (%s) → %s", bg_mode, out_path)
+    transition = preset.get("transition", "cut")
+    _concatenate(str(hook_out), str(main_clip), str(out_path), transition=transition, hook_duration=hook_duration)
+    log.info("Hook prepended (%s, transition=%s) → %s", bg_mode, transition, out_path)
     return str(out_path)
 
 
@@ -330,26 +331,71 @@ def _build_hook_ass(hook_text: str, duration: float, preset: dict) -> str:
 
 # ── Concatenation ─────────────────────────────────────────────────────────────
 
+# Fixed durations per transition type (locked — not user-tunable per §2.6.3).
+_TRANSITION_SPECS: dict[str, dict] = {
+    "fade":     {"effect": "fade",    "duration": 0.25},
+    "slide_up": {"effect": "slideup", "duration": 0.30},
+}
 
-def _concatenate(hook: str, main_clip: str, out: str):
-    """Concatenate hook.mp4 + main_clip into hooked.mp4 using the concat filter."""
-    filter_complex = (
-        "[0:v]setsar=1[hv];"
-        "[1:v]setsar=1[mv];"
-        "[hv][0:a][mv][1:a]concat=n=2:v=1:a=1[v][a]"
-    )
-    cmd = [
-        "ffmpeg", "-y",
-        "-i", hook,
-        "-i", main_clip,
-        "-filter_complex", filter_complex,
-        "-map", "[v]",
-        "-map", "[a]",
-        "-c:v", "libx264", "-crf", str(VIDEO_CRF), "-preset", VIDEO_PRESET,
-        "-c:a", "aac", "-b:a", AUDIO_BITRATE,
-        "-movflags", "+faststart",
-        out,
-    ]
+
+def _concatenate(
+    hook: str,
+    main_clip: str,
+    out: str,
+    transition: str = "cut",
+    hook_duration: float = 3.0,
+):
+    """Concatenate hook.mp4 + main_clip into hooked.mp4.
+
+    transition: "cut" (hard join, default), "fade" (0.25s cross-fade),
+                or "slide_up" (hook exits top while main enters from bottom, 0.3s).
+    Durations are fixed per type and not exposed as parameters.
+    """
+    spec = _TRANSITION_SPECS.get(transition)
+
+    if spec is None:
+        # Hard cut — original concat filter behaviour.
+        filter_complex = (
+            "[0:v]setsar=1[hv];"
+            "[1:v]setsar=1[mv];"
+            "[hv][0:a][mv][1:a]concat=n=2:v=1:a=1[v][a]"
+        )
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", hook,
+            "-i", main_clip,
+            "-filter_complex", filter_complex,
+            "-map", "[v]",
+            "-map", "[a]",
+            "-c:v", "libx264", "-crf", str(VIDEO_CRF), "-preset", VIDEO_PRESET,
+            "-c:a", "aac", "-b:a", AUDIO_BITRATE,
+            "-movflags", "+faststart",
+            out,
+        ]
+    else:
+        effect = spec["effect"]
+        t_dur = spec["duration"]
+        # xfade offset = when the transition begins in the first stream's timeline.
+        offset = max(0.0, hook_duration - t_dur)
+        filter_complex = (
+            f"[0:v]setsar=1[hv];"
+            f"[1:v]setsar=1[mv];"
+            f"[hv][mv]xfade=transition={effect}:duration={t_dur:.3f}:offset={offset:.3f}[v];"
+            f"[0:a][1:a]acrossfade=d={t_dur:.3f}[a]"
+        )
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", hook,
+            "-i", main_clip,
+            "-filter_complex", filter_complex,
+            "-map", "[v]",
+            "-map", "[a]",
+            "-c:v", "libx264", "-crf", str(VIDEO_CRF), "-preset", VIDEO_PRESET,
+            "-c:a", "aac", "-b:a", AUDIO_BITRATE,
+            "-movflags", "+faststart",
+            out,
+        ]
+
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        raise RuntimeError(f"ffmpeg concat failed:\n{result.stderr}")
+        raise RuntimeError(f"ffmpeg concat (transition={transition!r}) failed:\n{result.stderr}")
