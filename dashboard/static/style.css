@@ -936,27 +936,91 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .preset-select:focus { outline: 1px solid var(--accent); outline-offset: 1px; }
 
-/* ── Stub sections (space for upcoming 2.5 features) ─────────────────────── */
+/* ── Transcript editor ───────────────────────────────────────────────────── */
 
-.stub-section {
-  border: 1px dashed var(--border);
+.tx-editor {
+  border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
-.stub-label {
+.tx-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.tx-label {
   font-family: var(--font-mono);
   font-size: 9px;
   color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: 0.08em;
   font-weight: 600;
-  margin-bottom: 3px;
 }
 
-.stub-body {
+.tx-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.tx-edited-badge {
+  font-size: 9px;
+  font-family: var(--font-mono);
+  color: var(--accent);
+  background: var(--accent-soft, rgba(99,102,241,0.12));
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 1px 5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.tx-words {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 4px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.tx-word {
+  font-size: 11px;
+  color: var(--text-base);
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 2px 5px;
+  cursor: text;
+  outline: none;
+  min-width: 20px;
+  line-height: 1.4;
+  white-space: nowrap;
+  transition: border-color 0.1s, background 0.1s;
+}
+
+.tx-word:focus {
+  border-color: var(--accent);
+  background: var(--surface);
+}
+
+.tx-word.tx-changed {
+  border-color: var(--accent);
+  background: var(--accent-soft, rgba(99,102,241,0.08));
+  color: var(--accent);
+}
+
+.tx-loading,
+.tx-empty {
   font-size: 11px;
   color: var(--text-dim);
+  font-style: italic;
 }
 
 /* ── Hook video upload ───────────────────────────────────────────────────── */

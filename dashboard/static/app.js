@@ -510,6 +510,10 @@ async function showJobDetail(jobId) {
   _currentJobId = jobId;
   Object.keys(_bsugg).forEach(k => delete _bsugg[k]);
   Object.keys(_presetDirty).forEach(k => delete _presetDirty[k]);
+  Object.keys(_txWords).forEach(k => delete _txWords[k]);
+  Object.keys(_txHasEdits).forEach(k => delete _txHasEdits[k]);
+  Object.keys(_txDirty).forEach(k => delete _txDirty[k]);
+  Object.keys(_txFetching).forEach(k => delete _txFetching[k]);
   setSidebarNav('jobs');
 
   app.innerHTML = `
@@ -598,8 +602,25 @@ async function renderJobDetail(jobId) {
           const cStart = parseFloat(body.dataset.start);
           const cEnd   = parseFloat(body.dataset.end);
           if (_bsugg[cid] === undefined) fetchBsugg(cid, cStart, cEnd);
+          if (_txWords[cid] === undefined && !_txFetching[cid]) fetchTranscript(cid);
         }
       };
+    });
+
+    // Re-render transcript for clips that were already open before this poll re-render.
+    $$('.clip-body.open').forEach(body => {
+      const cid  = body.dataset.cid;
+      const cand = (job.candidates || []).find(c => c.id === cid);
+      if (!cand?.needs_caption) return;
+      if (_txWords[cid] !== undefined) {
+        if (_txWords[cid].length > 0) {
+          renderTranscriptWords(cid, _txWords[cid]);
+          checkTxDirty(cid);
+        }
+        updateTxActions(cid);
+      } else if (!_txFetching[cid]) {
+        fetchTranscript(cid);
+      }
     });
 
     $$('[data-recut]').forEach(btn => {
@@ -712,11 +733,19 @@ function renderClipCard(c, forceOpen = false) {
       </div>
     </div>`;
 
-  const stubTranscript = `
-    <div class="stub-section">
-      <div class="stub-label">Transcript editor · 2.5.6</div>
-      <div class="stub-body">Word-by-word correction</div>
-    </div>`;
+  const transcriptSection = c.needs_caption ? `
+    <div class="tx-editor" id="tx-editor-${c.id}">
+      <div class="tx-header">
+        <span class="tx-label">Transcript</span>
+        <div class="tx-actions" id="tx-actions-${c.id}"></div>
+      </div>
+      <div class="tx-words" id="tx-words-${c.id}">
+        ${hasVideo
+          ? '<span class="tx-loading">Loading…</span>'
+          : '<span class="tx-empty">Available after processing</span>'
+        }
+      </div>
+    </div>` : '';
 
   return `
   <div class="clip-card ${approvedClass}" id="clip-${c.id}">
@@ -769,7 +798,7 @@ function renderClipCard(c, forceOpen = false) {
             </div>
           </div>
 
-          ${stubTranscript}
+          ${transcriptSection}
 
           <div class="clip-actions">
             <button class="btn btn-ghost btn-sm" data-recut="${c.id}">↻ Regenerate</button>
@@ -853,6 +882,13 @@ async function removeHookVideo(cid) {
 const _nudge       = {};  // cid -> { start, end }
 const _bsugg       = {};  // cid -> suggestion object | null
 const _presetDirty = {};  // cid -> true when preset changed but not regenerated
+
+// ── Transcript editor state ────────────────────────────────────────────────
+
+const _txWords    = {};  // cid -> word array (baseline for change detection)
+const _txHasEdits = {};  // cid -> bool (words_edited.json exists on backend)
+const _txDirty    = {};  // cid -> bool (current cells differ from baseline)
+const _txFetching = {};  // cid -> bool (fetch in progress)
 
 // ── Preset cache ───────────────────────────────────────────────────────────
 
@@ -1022,6 +1058,129 @@ async function acceptBsuggEnd(cid, suggestedEnd, currentStart) {
     delete _bsugg[cid];
     _restartDetailPoll();
     toast('End shifted to sentence boundary, recut queued…');
+  } catch (e) {
+    toast('Error: ' + e.message, 'error');
+  }
+}
+
+// ── Transcript editor ─────────────────────────────────────────────────────
+
+function escHtml(s) {
+  return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+async function fetchTranscript(cid) {
+  _txFetching[cid] = true;
+  const wordsEl = document.getElementById(`tx-words-${cid}`);
+  if (wordsEl) wordsEl.innerHTML = '<span class="tx-loading">Loading…</span>';
+  try {
+    const data = await api('GET', `/candidates/${cid}/transcript`);
+    _txWords[cid]    = data.words;
+    _txHasEdits[cid] = data.has_edits;
+    _txDirty[cid]    = false;
+    if (!data.words.length) {
+      const el = document.getElementById(`tx-words-${cid}`);
+      if (el) el.innerHTML = '<span class="tx-empty">No transcript available</span>';
+    } else {
+      renderTranscriptWords(cid, data.words);
+    }
+    updateTxActions(cid);
+  } catch {
+    const el = document.getElementById(`tx-words-${cid}`);
+    if (el) el.innerHTML = '<span class="tx-empty">Could not load transcript</span>';
+  } finally {
+    _txFetching[cid] = false;
+  }
+}
+
+function renderTranscriptWords(cid, words) {
+  const el = document.getElementById(`tx-words-${cid}`);
+  if (!el) return;
+  el.innerHTML = words.map((w, i) =>
+    `<span class="tx-word" contenteditable="true" data-tx-cid="${cid}" data-tx-idx="${i}">${escHtml(w.text)}</span>`
+  ).join('');
+  attachTxHandlers(cid, el);
+}
+
+function attachTxHandlers(cid, container) {
+  $$(`[data-tx-cid="${cid}"]`, container).forEach(span => {
+    span.addEventListener('keydown', e => {
+      if (e.key === ' ' || e.key === 'Enter') e.preventDefault();
+    });
+    span.addEventListener('paste', e => {
+      e.preventDefault();
+      const raw  = e.clipboardData.getData('text/plain');
+      const word = raw.split(/\s+/).filter(Boolean)[0] || '';
+      document.execCommand('insertText', false, word);
+    });
+    span.addEventListener('input', () => {
+      const text = span.textContent;
+      if (text.includes(' ') || text.includes('\n')) {
+        span.textContent = text.replace(/[\s\n]/g, '');
+        const range = document.createRange();
+        range.selectNodeContents(span);
+        range.collapse(false);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+      checkTxDirty(cid);
+    });
+  });
+}
+
+function checkTxDirty(cid) {
+  const baseline = _txWords[cid];
+  if (!baseline) return;
+  const spans = $$(`[data-tx-cid="${cid}"]`);
+  let dirty = false;
+  spans.forEach((span, i) => {
+    const changed = span.textContent !== (baseline[i]?.text || '');
+    span.classList.toggle('tx-changed', changed);
+    if (changed) dirty = true;
+  });
+  _txDirty[cid] = dirty;
+  updateTxActions(cid);
+}
+
+function updateTxActions(cid) {
+  const el = document.getElementById(`tx-actions-${cid}`);
+  if (!el) return;
+  let html = '';
+  if (_txHasEdits[cid]) {
+    html += '<span class="tx-edited-badge">edited</span>';
+  }
+  if (_txDirty[cid]) {
+    html += `<button class="btn btn-ghost btn-sm" onclick="saveTxEdits('${cid}')">Save edits</button>`;
+  } else if (_txHasEdits[cid]) {
+    html += `<button class="btn btn-primary btn-sm" onclick="triggerRecaption('${cid}')">Re-caption</button>`;
+  }
+  el.innerHTML = html;
+}
+
+async function saveTxEdits(cid) {
+  const spans = $$(`[data-tx-cid="${cid}"]`);
+  const words = spans.map(span => ({ text: span.textContent.trim() }));
+  try {
+    await api('PUT', `/candidates/${cid}/transcript`, { words });
+    if (_txWords[cid]) {
+      words.forEach((w, i) => { if (_txWords[cid][i]) _txWords[cid][i] = { ..._txWords[cid][i], text: w.text }; });
+    }
+    _txHasEdits[cid] = true;
+    _txDirty[cid]    = false;
+    $$(`[data-tx-cid="${cid}"]`).forEach(s => s.classList.remove('tx-changed'));
+    updateTxActions(cid);
+    toast('Transcript saved', 'success');
+  } catch (e) {
+    toast('Save failed: ' + e.message, 'error');
+  }
+}
+
+async function triggerRecaption(cid) {
+  try {
+    await api('POST', `/candidates/${cid}/recaption`);
+    _restartDetailPoll();
+    toast('Re-captioning queued…');
   } catch (e) {
     toast('Error: ' + e.message, 'error');
   }

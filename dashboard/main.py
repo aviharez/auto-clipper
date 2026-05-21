@@ -320,6 +320,65 @@ async def api_stage_hook_video(job_id: str, clip_index: int, file: UploadFile = 
     return {"ok": True}
 
 
+@app.get("/api/candidates/{cand_id}/transcript")
+def api_get_transcript(cand_id: str):
+    candidate = db.get_candidate(cand_id)
+    if not candidate:
+        raise HTTPException(404, "Candidate not found")
+    clip_dir = JOBS_DIR / candidate["job_id"] / "clips" / cand_id
+    edited_path = clip_dir / "words_edited.json"
+    words_path  = clip_dir / "words.json"
+    if edited_path.exists():
+        return {"words": json.loads(edited_path.read_text(encoding="utf-8")), "has_edits": True}
+    elif words_path.exists():
+        return {"words": json.loads(words_path.read_text(encoding="utf-8")), "has_edits": False}
+    return {"words": [], "has_edits": False}
+
+
+class TranscriptWordEdit(BaseModel):
+    text: str
+
+
+class TranscriptUpdate(BaseModel):
+    words: list[TranscriptWordEdit]
+
+
+@app.put("/api/candidates/{cand_id}/transcript")
+def api_update_transcript(cand_id: str, body: TranscriptUpdate):
+    candidate = db.get_candidate(cand_id)
+    if not candidate:
+        raise HTTPException(404, "Candidate not found")
+    clip_dir = JOBS_DIR / candidate["job_id"] / "clips" / cand_id
+    words_path = clip_dir / "words.json"
+    if not words_path.exists():
+        raise HTTPException(400, "No machine transcript exists for this clip")
+    original = json.loads(words_path.read_text(encoding="utf-8"))
+    if len(body.words) != len(original):
+        raise HTTPException(400, f"Word count mismatch: expected {len(original)}, got {len(body.words)}")
+    # Preserve original timing and speaker; only update text.
+    merged = [
+        {**orig, "text": edit.text.strip() or orig["text"]}
+        for orig, edit in zip(original, body.words)
+    ]
+    edited_path = clip_dir / "words_edited.json"
+    edited_path.write_text(json.dumps(merged, indent=2, ensure_ascii=False), encoding="utf-8")
+    return {"ok": True, "word_count": len(merged)}
+
+
+@app.post("/api/candidates/{cand_id}/recaption")
+def api_recaption(cand_id: str):
+    candidate = db.get_candidate(cand_id)
+    if not candidate:
+        raise HTTPException(404, "Candidate not found")
+    if candidate["status"] != "ready":
+        raise HTTPException(400, f"Clip is not ready (status: {candidate['status']})")
+    clip_dir = JOBS_DIR / candidate["job_id"] / "clips" / cand_id
+    if not (clip_dir / "words_edited.json").exists():
+        raise HTTPException(400, "No transcript edits saved — save edits first")
+    runner.schedule_restyle(candidate["job_id"], cand_id, "caption")
+    return {"status": "recaption_queued"}
+
+
 @app.post("/api/candidates/{cand_id}/restyle")
 def api_restyle(cand_id: str):
     candidate = db.get_candidate(cand_id)

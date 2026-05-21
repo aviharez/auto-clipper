@@ -22,7 +22,9 @@ def run(job: dict, cand_id: str, candidate: dict) -> str:
     ass_path = clip_dir / "captions.ass"
     out_path = clip_dir / "captioned.mp4"
 
-    words = json.loads(words_path.read_text(encoding="utf-8"))
+    edited_path = clip_dir / "words_edited.json"
+    src_path = edited_path if edited_path.exists() else words_path
+    words = json.loads(src_path.read_text(encoding="utf-8"))
     if not words:
         log.warning("No words found for candidate %s — skipping captions", cand_id)
         import shutil
