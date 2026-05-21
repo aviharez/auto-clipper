@@ -463,12 +463,19 @@ async function renderJobList() {
       }
 
       const url = j.source_url || '';
+      const meta = JSON.parse(j.metadata_json || '{}');
+      const videoTitle = meta.title || null;
+      const channelName = meta.uploader || j.channel_name || null;
       const shortUrl = url.replace(/^https?:\/\/(www\.)?/, '').slice(0, 52);
+      const displayTitle = videoTitle
+        ? (channelName ? `[${channelName}] ${videoTitle}` : videoTitle)
+        : (channelName ? `[${channelName}] ${shortUrl}` : shortUrl);
+      const titleAttr = videoTitle ? `${channelName ? `[${channelName}] ` : ''}${videoTitle}` : url;
 
       return `
         <div class="job-row" onclick="location.hash='job/${j.id}'">
           <div>
-            <div class="job-row-title" title="${url}">${shortUrl}</div>
+            <div class="job-row-title" title="${titleAttr}">${displayTitle}</div>
             <div class="job-row-sub">${fmtDate(j.created_at)}</div>
           </div>
           <div>${badge(j.status)}</div>
@@ -580,6 +587,7 @@ async function renderJobDetail(jobId) {
         <div>Clips: <strong>${totalCount}</strong></div>
         ${job.error ? `<div style="color:var(--red)">${job.error.split('\n')[0]}</div>` : ''}
       </div>
+      ${job.status === 'downloading' ? renderDownloadProgress(job.download_progress) : ''}
       <div class="screen-body">
         <div class="clip-list" id="clip-list">
           ${(job.candidates || []).map(c => renderClipCard(c, openIds.has(c.id))).join('')}
@@ -673,6 +681,24 @@ async function renderJobDetail(jobId) {
   } catch (e) {
     app.innerHTML = `<div class="empty">Error: ${e.message}</div>`;
   }
+}
+
+function renderDownloadProgress(pct) {
+  const p = (pct != null && pct >= 0) ? Math.min(pct, 100) : null;
+  const label = p != null ? `${p}%` : 'Starting…';
+  const width  = p != null ? p : 0;
+  return `
+    <div class="download-progress-bar" style="flex-shrink:0">
+      <div class="download-progress-inner">
+        <div class="download-progress-label">
+          <span>Downloading source video</span>
+          <span class="download-progress-pct">${label}</span>
+        </div>
+        <div class="download-progress-track">
+          <div class="download-progress-fill" style="width:${width}%"></div>
+        </div>
+      </div>
+    </div>`;
 }
 
 function renderClipCard(c, forceOpen = false) {

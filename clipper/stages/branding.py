@@ -6,8 +6,9 @@ When the input is hooked.mp4 the overlay is hidden during the hook segment
 (via ffmpeg's enable='gte(t,HOOK_DURATION)') so it only appears once the main
 content begins.
 
-Skipped silently when job["channel_name"] is empty/None so existing jobs
-without a channel name are unaffected.
+Skipped silently when no channel name can be resolved so existing jobs
+without metadata are unaffected. Channel name is read from metadata_json["uploader"]
+(set after ingest), falling back to job["channel_name"] (user input).
 
 Input priority: hooked.mp4 > captioned.mp4 > raw.mp4
 Output: branded.mp4
@@ -33,7 +34,13 @@ log = logging.getLogger(__name__)
 
 def run(job: dict, cand_id: str, candidate: dict) -> Optional[str]:
     """Overlay YouTube logo + channel name. Returns branded.mp4 path or None."""
-    channel_name = (job.get("channel_name") or "").strip()
+    meta = {}
+    try:
+        import json
+        meta = json.loads(job.get("metadata_json") or "{}")
+    except Exception:
+        pass
+    channel_name = (meta.get("uploader") or job.get("channel_name") or "").strip()
     if not channel_name:
         return None
 

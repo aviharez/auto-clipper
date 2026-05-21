@@ -26,7 +26,10 @@ def get_conn() -> sqlite3.Connection:
 
 def _migrate(conn: sqlite3.Connection):
     """Add columns that were introduced after the initial schema without dropping data."""
-    new_cols = [("jobs", "channel_name", "TEXT")]
+    new_cols = [
+        ("jobs", "channel_name", "TEXT"),
+        ("jobs", "download_progress", "INTEGER"),
+    ]
     for table, col, col_type in new_cols:
         try:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")
