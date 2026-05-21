@@ -75,6 +75,9 @@ def api_list_jobs():
     return jobs
 
 
+_ACCEPTED_BG_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".mp4", ".mov", ".avi", ".mkv", ".webm"}
+
+
 class ClipFormItem(BaseModel):
     start: str
     end: str
@@ -84,6 +87,7 @@ class ClipFormItem(BaseModel):
     needs_caption: Optional[bool] = None
     caption_preset: Optional[str] = None
     hook_preset: Optional[str] = None
+    hook_duration: Optional[float] = None
 
 
 class JobFormBody(BaseModel):
@@ -138,6 +142,8 @@ async def api_create_job_from_form(body: JobFormBody):
         hook_preset = clip.hook_preset or body.default_hook_preset
         if hook_preset:
             c["hook_preset"] = hook_preset
+        if clip.hook_duration is not None:
+            c["hook_duration"] = clip.hook_duration
         clips.append(c)
     spec["clips"] = clips
 
@@ -302,8 +308,15 @@ async def api_upload_hook_video(cand_id: str, file: UploadFile = File(...)):
     candidate = db.get_candidate(cand_id)
     if not candidate:
         raise HTTPException(404, "Candidate not found")
+
+    original_ext = Path(file.filename or "").suffix.lower() or ".mp4"
+    if original_ext not in _ACCEPTED_BG_EXTS:
+        raise HTTPException(400, f"Unsupported file type: {original_ext!r}. Use jpg/png/gif/webp or mp4/mov/etc.")
+
     clip_dir = JOBS_DIR / candidate["job_id"] / "clips" / cand_id
-    dest = clip_dir / "hook_background.mp4"
+    for old in clip_dir.glob("hook_background.*"):
+        old.unlink()
+    dest = clip_dir / f"hook_background{original_ext}"
     with dest.open("wb") as f:
         shutil.copyfileobj(file.file, f)
     db.update_candidate(cand_id, hook_background="external")
@@ -328,9 +341,16 @@ async def api_stage_hook_video(job_id: str, clip_index: int, file: UploadFile = 
     job = db.get_job(job_id)
     if not job:
         raise HTTPException(404, "Job not found")
+
+    original_ext = Path(file.filename or "").suffix.lower() or ".mp4"
+    if original_ext not in _ACCEPTED_BG_EXTS:
+        raise HTTPException(400, f"Unsupported file type: {original_ext!r}. Use jpg/png/gif/webp or mp4/mov/etc.")
+
     staged_dir = JOBS_DIR / job_id / "staged_hooks"
     staged_dir.mkdir(exist_ok=True)
-    dest = staged_dir / f"{clip_index}.mp4"
+    for old in staged_dir.glob(f"{clip_index}.*"):
+        old.unlink()
+    dest = staged_dir / f"{clip_index}{original_ext}"
     with dest.open("wb") as f:
         shutil.copyfileobj(file.file, f)
     return {"ok": True}

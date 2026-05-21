@@ -1,12 +1,18 @@
 """
-Hook opener stage — prepends a short blurred teaser to the main clip.
+Hook opener stage — prepends a short teaser segment to the main clip.
 
-blur_self (default): takes the first N seconds of raw.mp4, heavily blurs +
-darkens them, and burns the hook_text as a centred ASS subtitle.  The hook
-segment has silent audio; voice content starts when the main clip begins.
+Three background paths (detected at runtime by file extension):
+  blur_self   — default; first N seconds of raw.mp4, heavily blurred + darkened.
+  video       — uploaded video clipped to hook_duration; if shorter, last frame frozen.
+  image       — uploaded image displayed static for hook_duration seconds.
 
-external-asset mode is a future extension (not built here).
+In ALL three modes hook_text is ALWAYS rendered with the chosen preset overlay.
+The 2.5.5 "external video → suppress text" branch has been removed (2.6.2).
+
+Locked behavior: when an uploaded video is shorter than hook_duration, freeze the
+last frame to fill the remaining time (do NOT loop — looping glitches at the seam).
 """
+import json as _json
 import logging
 import re
 import subprocess
@@ -15,7 +21,6 @@ from typing import Optional
 
 from clipper.config import (
     BASE_DIR,
-    CAPTION_PRESETS, DEFAULT_CAPTION_PRESET,
     HOOK_PRESETS, DEFAULT_HOOK_PRESET,
     CLIP_WIDTH, CLIP_HEIGHT,
     VIDEO_CRF, VIDEO_PRESET, AUDIO_BITRATE,
@@ -25,52 +30,213 @@ from clipper.config import (
 
 log = logging.getLogger(__name__)
 
+_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+_VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
+
 
 def run(job: dict, cand_id: str, candidate: dict) -> Optional[str]:
     """Prepend hook segment to the (captioned) clip. Returns hooked.mp4 path or None."""
     if not candidate["hook_enabled"]:
         return None
-
-    clip_dir    = JOBS_DIR / job["id"] / "clips" / cand_id
-    raw         = clip_dir / "raw.mp4"
-    captioned   = clip_dir / "captioned.mp4"
-    hook_out    = clip_dir / "hook.mp4"
-    out_path    = clip_dir / "hooked.mp4"
-    external_bg = clip_dir / "hook_background.mp4"
-    main_clip   = captioned if captioned.exists() else raw
-
-    is_external = (
-        candidate.get("hook_background", "blur_self") != "blur_self"
-        and external_bg.exists()
-    )
-
-    if is_external:
-        # External video is used as-is — no blur, no text overlay.
-        # hook_text is intentionally ignored: the uploaded clip already contains it.
-        _concatenate(str(external_bg), str(main_clip), str(out_path))
-        log.info("Hook prepended (external) → %s", out_path)
-        return str(out_path)
-
-    # blur_self mode: hook_text is required to produce the overlay.
     if not (candidate.get("hook_text") or "").strip():
         return None
 
+    clip_dir  = JOBS_DIR / job["id"] / "clips" / cand_id
+    raw       = clip_dir / "raw.mp4"
+    captioned = clip_dir / "captioned.mp4"
+    hook_out  = clip_dir / "hook.mp4"
+    out_path  = clip_dir / "hooked.mp4"
+    main_clip = captioned if captioned.exists() else raw
+
     hook_preset_name = candidate.get("hook_preset") or DEFAULT_HOOK_PRESET
     preset = HOOK_PRESETS.get(hook_preset_name) or HOOK_PRESETS[DEFAULT_HOOK_PRESET]
+    hook_duration = float(candidate.get("hook_duration") or DEFAULT_HOOK_DURATION)
+
+    bg_mode, bg_file = _resolve_background(
+        candidate.get("hook_background", "blur_self"), clip_dir
+    )
 
     _create_hook_segment(
-        src=str(raw),
+        raw=str(raw),
+        bg_mode=bg_mode,
+        bg_file=bg_file,
         out=str(hook_out),
         hook_text=candidate["hook_text"],
-        duration=DEFAULT_HOOK_DURATION,
+        duration=hook_duration,
         preset=preset,
     )
     _concatenate(str(hook_out), str(main_clip), str(out_path))
-    log.info("Hook prepended → %s", out_path)
+    log.info("Hook prepended (%s) → %s", bg_mode, out_path)
     return str(out_path)
 
 
+# ── Background resolution ─────────────────────────────────────────────────────
+
+
+def _resolve_background(
+    hook_background: str, clip_dir: Path
+) -> tuple[str, Optional[Path]]:
+    """Return (mode, file_or_None). mode: 'blur_self' | 'video' | 'image'.
+
+    Searches for any hook_background.* file and classifies by extension.
+    Falls back to blur_self if declared external but no file is found.
+    """
+    if hook_background == "blur_self":
+        return "blur_self", None
+
+    for f in sorted(clip_dir.glob("hook_background.*")):
+        ext = f.suffix.lower()
+        if ext in _IMAGE_EXTS:
+            return "image", f
+        if ext in _VIDEO_EXTS:
+            return "video", f
+
+    log.warning(
+        "hook_background=%r declared but no file found in %s; falling back to blur_self",
+        hook_background, clip_dir,
+    )
+    return "blur_self", None
+
+
 # ── Hook segment creation ─────────────────────────────────────────────────────
+
+
+def _create_hook_segment(
+    raw: str,
+    bg_mode: str,
+    bg_file: Optional[Path],
+    out: str,
+    hook_text: str,
+    duration: float,
+    preset: dict,
+):
+    clip_dir = Path(out).parent
+    ass_path = clip_dir / "hook_text.ass"
+    ass_path.write_text(_build_hook_ass(hook_text, duration, preset), encoding="utf-8")
+
+    ass_rel   = ass_path.relative_to(BASE_DIR).as_posix()
+    fonts_rel = FONTS_DIR.relative_to(BASE_DIR).as_posix()
+
+    if bg_mode == "image":
+        _make_hook_image_bg(str(bg_file), out, ass_rel, fonts_rel, duration, preset)
+    elif bg_mode == "video":
+        _make_hook_video_bg(str(bg_file), out, ass_rel, fonts_rel, duration, preset)
+    else:
+        _make_hook_blur_self(raw, out, ass_rel, fonts_rel, duration, preset)
+
+
+def _make_hook_blur_self(
+    src: str, out: str, ass_rel: str, fonts_rel: str, duration: float, preset: dict
+):
+    brightness = preset.get("bg_brightness", -0.35)
+    vf = (
+        f"trim=0:{duration},setpts=PTS-STARTPTS,"
+        f"boxblur=luma_radius=25:luma_power=3:chroma_radius=20:chroma_power=3,"
+        f"eq=brightness={brightness},"
+        f"setsar=1,"
+        f"ass={ass_rel}:fontsdir={fonts_rel}"
+    )
+    filter_complex = (
+        f"[0:v]{vf}[hookv];"
+        f"anullsrc=sample_rate=44100:channel_layout=stereo,"
+        f"atrim=0:{duration}[hooka]"
+    )
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", src,
+        "-filter_complex", filter_complex,
+        "-map", "[hookv]", "-map", "[hooka]",
+        "-c:v", "libx264", "-crf", str(VIDEO_CRF), "-preset", VIDEO_PRESET,
+        "-c:a", "aac", "-b:a", AUDIO_BITRATE,
+        "-movflags", "+faststart",
+        out,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(BASE_DIR))
+    if result.returncode != 0:
+        raise RuntimeError(f"ffmpeg hook (blur_self) failed:\n{result.stderr}")
+
+
+def _probe_duration(path: str) -> float:
+    res = subprocess.run(
+        ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", path],
+        capture_output=True, text=True,
+    )
+    if res.returncode != 0:
+        raise RuntimeError(f"ffprobe failed: {res.stderr}")
+    return float(_json.loads(res.stdout)["format"]["duration"])
+
+
+def _make_hook_video_bg(
+    bg_file: str, out: str, ass_rel: str, fonts_rel: str, duration: float, preset: dict
+):
+    """Video background: trim to hook_duration; if shorter, freeze last frame."""
+    vid_dur = _probe_duration(bg_file)
+    if vid_dur >= duration:
+        vf_trim = f"trim=0:{duration},setpts=PTS-STARTPTS"
+    else:
+        # Freeze the last frame to fill the remaining time (locked: no looping).
+        freeze = duration - vid_dur
+        vf_trim = f"setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration={freeze:.3f}"
+
+    vf = (
+        f"{vf_trim},"
+        f"scale={CLIP_WIDTH}:{CLIP_HEIGHT}:force_original_aspect_ratio=increase,"
+        f"crop={CLIP_WIDTH}:{CLIP_HEIGHT},"
+        f"setsar=1,"
+        f"ass={ass_rel}:fontsdir={fonts_rel}"
+    )
+    filter_complex = (
+        f"[0:v]{vf}[hookv];"
+        f"anullsrc=sample_rate=44100:channel_layout=stereo,"
+        f"atrim=0:{duration}[hooka]"
+    )
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", bg_file,
+        "-filter_complex", filter_complex,
+        "-map", "[hookv]", "-map", "[hooka]",
+        "-c:v", "libx264", "-crf", str(VIDEO_CRF), "-preset", VIDEO_PRESET,
+        "-c:a", "aac", "-b:a", AUDIO_BITRATE,
+        "-movflags", "+faststart",
+        out,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(BASE_DIR))
+    if result.returncode != 0:
+        raise RuntimeError(f"ffmpeg hook (video bg) failed:\n{result.stderr}")
+
+
+def _make_hook_image_bg(
+    bg_file: str, out: str, ass_rel: str, fonts_rel: str, duration: float, preset: dict
+):
+    """-loop 1 treats the image as an infinite stream; trim=0:duration caps it."""
+    vf = (
+        f"trim=0:{duration},setpts=PTS-STARTPTS,"
+        f"scale={CLIP_WIDTH}:{CLIP_HEIGHT}:force_original_aspect_ratio=increase,"
+        f"crop={CLIP_WIDTH}:{CLIP_HEIGHT},"
+        f"setsar=1,"
+        f"ass={ass_rel}:fontsdir={fonts_rel}"
+    )
+    filter_complex = (
+        f"[0:v]{vf}[hookv];"
+        f"anullsrc=sample_rate=44100:channel_layout=stereo,"
+        f"atrim=0:{duration}[hooka]"
+    )
+    cmd = [
+        "ffmpeg", "-y",
+        "-loop", "1", "-framerate", "25", "-i", bg_file,
+        "-filter_complex", filter_complex,
+        "-map", "[hookv]", "-map", "[hooka]",
+        "-c:v", "libx264", "-crf", str(VIDEO_CRF), "-preset", VIDEO_PRESET,
+        "-c:a", "aac", "-b:a", AUDIO_BITRATE,
+        "-movflags", "+faststart",
+        out,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(BASE_DIR))
+    if result.returncode != 0:
+        raise RuntimeError(f"ffmpeg hook (image bg) failed:\n{result.stderr}")
+
+
+# ── ASS subtitle helpers ──────────────────────────────────────────────────────
 
 
 def _format_ass_time(seconds: float) -> str:
@@ -111,14 +277,11 @@ def _build_hook_ass(hook_text: str, duration: float, preset: dict) -> str:
     text_color    = _rgb_to_ass(preset.get("text_color", "#FFFFFF"))
     border_style  = preset.get("border_style", 1)
 
-    # BorderStyle=3: OutlineColour fills the opaque box behind each line.
     if border_style == 3:
         outline_color = _rgb_to_ass(preset["box_color"])
     else:
         outline_color = "&H00000000&"
 
-    # position="lower" → alignment 2 (bottom-center), MarginV ~20% from bottom.
-    # Default (no position key or "center") → alignment 5 (centre of screen).
     if preset.get("position") == "lower":
         alignment = 2
         margin_v  = 400
@@ -128,13 +291,10 @@ def _build_hook_ass(hook_text: str, duration: float, preset: dict) -> str:
 
     margin_h = preset.get("margin_h", 80)
 
-    # Apply text transforms before highlight parsing.
     text = hook_text
     if preset.get("text_transform") == "upper":
         text = text.upper()
 
-    # [bracket] highlight: if preset has highlight_color, apply inline ASS color
-    # overrides; otherwise just strip the brackets (e.g. box preset).
     highlight_hex = preset.get("highlight_color")
     if highlight_hex:
         text = _apply_bracket_highlight(text, text_color, _rgb_to_ass(highlight_hex))
@@ -168,60 +328,11 @@ def _build_hook_ass(hook_text: str, duration: float, preset: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _create_hook_segment(
-    src: str, out: str, hook_text: str, duration: float, preset: dict
-):
-    """
-    Produce hook.mp4: first `duration` seconds of src, heavily blurred + darkened,
-    with hook_text centred via ASS.  Audio track is silence (voice starts in main clip).
-    """
-    clip_dir = Path(out).parent
-    ass_path = clip_dir / "hook_text.ass"
-    ass_path.write_text(_build_hook_ass(hook_text, duration, preset), encoding="utf-8")
-
-    ass_rel   = ass_path.relative_to(BASE_DIR).as_posix()
-    fonts_rel = FONTS_DIR.relative_to(BASE_DIR).as_posix()
-    brightness = preset.get("bg_brightness", -0.35)
-
-    vf = (
-        f"trim=0:{duration},setpts=PTS-STARTPTS,"
-        f"boxblur=luma_radius=25:luma_power=3:chroma_radius=20:chroma_power=3,"
-        f"eq=brightness={brightness},"
-        f"setsar=1,"   # normalise SAR so concat with main clip is seamless
-        f"ass={ass_rel}:fontsdir={fonts_rel}"
-    )
-
-    # anullsrc generates the silent audio track for the hook segment.
-    filter_complex = (
-        f"[0:v]{vf}[hookv];"
-        f"anullsrc=sample_rate=44100:channel_layout=stereo,"
-        f"atrim=0:{duration}[hooka]"
-    )
-
-    cmd = [
-        "ffmpeg", "-y",
-        "-i", src,
-        "-filter_complex", filter_complex,
-        "-map", "[hookv]",
-        "-map", "[hooka]",
-        "-c:v", "libx264", "-crf", str(VIDEO_CRF), "-preset", VIDEO_PRESET,
-        "-c:a", "aac", "-b:a", AUDIO_BITRATE,
-        "-movflags", "+faststart",
-        out,
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(BASE_DIR))
-    if result.returncode != 0:
-        raise RuntimeError(f"ffmpeg hook segment failed:\n{result.stderr}")
-
-
 # ── Concatenation ─────────────────────────────────────────────────────────────
 
 
 def _concatenate(hook: str, main_clip: str, out: str):
     """Concatenate hook.mp4 + main_clip into hooked.mp4 using the concat filter."""
-    # Normalise SAR on both inputs to 1:1 before concat — ffmpeg 8.x refuses to
-    # join segments with mismatched SAR (hook is 1:1; main clip may be 404:405
-    # inherited from the YouTube source).
     filter_complex = (
         "[0:v]setsar=1[hv];"
         "[1:v]setsar=1[mv];"

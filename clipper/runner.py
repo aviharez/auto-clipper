@@ -57,10 +57,15 @@ def _process_job(job: dict):
         source = ManualCandidateSource(job["yaml_path"])
         candidates = source.generate(job)
         cand_ids = []
+        staged_hooks_dir = JOBS_DIR / job_id / "staged_hooks"
         for idx, c in enumerate(candidates):
-            # Check for pre-staged hook video uploaded from the new-job form
-            staged_hook = JOBS_DIR / job_id / "staged_hooks" / f"{idx}.mp4"
-            hook_background = "external" if staged_hook.exists() else c.hook_background
+            # Find a pre-staged hook file for this clip index (any extension).
+            staged_hook = None
+            if staged_hooks_dir.exists():
+                for p in staged_hooks_dir.glob(f"{idx}.*"):
+                    staged_hook = p
+                    break
+            hook_background = "external" if staged_hook else c.hook_background
 
             cid = db.insert_candidate(job_id, idx, {
                 "start": c.start,
@@ -74,11 +79,12 @@ def _process_job(job: dict):
                 "hook_preset": c.hook_preset,
                 "rank": c.rank,
                 "origin": c.origin,
+                "hook_duration": c.hook_duration,
             })
 
-            if staged_hook.exists():
+            if staged_hook:
                 clip_dir = JOBS_DIR / job_id / "clips" / cid
-                shutil.move(str(staged_hook), str(clip_dir / "hook_background.mp4"))
+                shutil.move(str(staged_hook), str(clip_dir / f"hook_background{staged_hook.suffix}"))
 
             cand_ids.append(cid)
 

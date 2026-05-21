@@ -146,6 +146,11 @@ async function showJobList() {
               <span>Default hook on</span>
             </label>
           </div>
+          <div class="form-field" style="max-width:180px">
+            <label class="form-label" for="form-hook-duration">Hook duration (s)</label>
+            <input class="form-input form-input-sm" id="form-hook-duration" type="number"
+                   min="1" max="10" step="0.5" value="3" />
+          </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 10px">
             <div class="form-field">
               <label class="form-label" for="form-caption-preset">Caption style</label>
@@ -275,7 +280,7 @@ async function setupNewJobPanel() {
   $('#btn-cancel-form').onclick  = () => { $('#new-job-panel').style.display = 'none'; };
   $('#btn-cancel-upload').onclick = () => { $('#new-job-panel').style.display = 'none'; };
   $('#btn-add-clip').onclick      = () => {
-    _formClips.push({ start: '', end: '', title: '', hook_text: '', hook_background: 'blur_self', caption_preset: '', hook_preset: '' });
+    _formClips.push({ start: '', end: '', title: '', hook_text: '', hook_background: 'blur_self', caption_preset: '', hook_preset: '', hook_duration: '' });
     renderFormClips();
   };
   $('#btn-form-submit').onclick = submitForm;
@@ -350,15 +355,21 @@ function renderFormClips() {
           <label class="form-label">Hook source</label>
           <select class="form-input form-input-sm" data-clip-idx="${i}" data-clip-field="hook_background">
             <option value="blur_self"${clip.hook_background !== 'external' ? ' selected' : ''}>Generated (blur)</option>
-            <option value="external"${clip.hook_background === 'external' ? ' selected' : ''}>Upload video</option>
+            <option value="external"${clip.hook_background === 'external' ? ' selected' : ''}>Upload file</option>
           </select>
         </div>
         <div class="form-field" id="form-hook-file-row-${i}"${clip.hook_background !== 'external' ? ' style="display:none"' : ''}>
-          <label class="form-label">Hook video file</label>
-          <input type="file" accept="video/*" class="form-input form-input-sm"
+          <label class="form-label">Hook background (video or image)</label>
+          <input type="file" accept="video/*,image/*" class="form-input form-input-sm"
                  data-clip-hook-file="${i}"
                  style="padding:4px 6px;cursor:pointer" />
           ${_formHookFiles[i] ? `<span style="font-size:10px;color:var(--text-muted);margin-top:2px">${escAttr(_formHookFiles[i].name)}</span>` : ''}
+        </div>
+        <div class="form-field">
+          <label class="form-label">Hook duration (s)</label>
+          <input class="form-input form-input-sm" type="number" min="1" max="10" step="0.5"
+                 data-clip-idx="${i}" data-clip-field="hook_duration"
+                 value="${clip.hook_duration || ''}" placeholder="Batch default" />
         </div>
       </div>
     </div>
@@ -430,6 +441,7 @@ async function submitForm() {
 
   const defaultCaptionPreset = $('#form-caption-preset')?.value || null;
   const defaultHookPreset    = $('#form-hook-preset')?.value    || null;
+  const hookDuration         = parseFloat($('#form-hook-duration')?.value) || 3;
 
   try {
     const { job_id } = await api('POST', '/jobs/from-form', {
@@ -437,6 +449,7 @@ async function submitForm() {
       channel_name:           channelName || null,
       default_captions:       defCaptions,
       hook_enabled:           hookEnabled,
+      hook_duration:          hookDuration,
       default_caption_preset: defaultCaptionPreset,
       default_hook_preset:    defaultHookPreset,
       clips: _formClips.map(c => ({
@@ -446,18 +459,19 @@ async function submitForm() {
         hook_text:      c.hook_text?.trim() || null,
         caption_preset: c.caption_preset || null,
         hook_preset:    c.hook_preset    || null,
+        hook_duration:  c.hook_duration ? parseFloat(c.hook_duration) : null,
       })),
     });
 
-    // Upload staged hook videos for clips that selected "upload video"
+    // Upload staged hook files for clips that selected "upload file"
     const hookUploads = Object.entries(_formHookFiles).filter(([, f]) => f);
     if (hookUploads.length) {
-      btn.textContent = 'Uploading hook videos…';
+      btn.textContent = 'Uploading hook files…';
       await Promise.all(hookUploads.map(async ([idx, file]) => {
         const fd = new FormData();
         fd.append('file', file);
         const res = await fetch(`/api/jobs/${job_id}/hook-videos/${idx}`, { method: 'POST', body: fd });
-        if (!res.ok) throw new Error(`Hook video ${+idx + 1} upload failed`);
+        if (!res.ok) throw new Error(`Hook file ${+idx + 1} upload failed`);
       }));
     }
 
@@ -848,16 +862,16 @@ function renderClipControlsHtml(c) {
       <span class="ctrl-section-title">Hook source</span>
       <div class="hook-source-toggle" style="margin-bottom:8px">
         <button class="hook-src-btn${!isExternal ? ' active' : ''}" data-hook-src="blur_self" data-cid="${c.id}">Generated (blur)</button>
-        <button class="hook-src-btn${isExternal ? ' active' : ''}" data-hook-src="external" data-cid="${c.id}">Upload video</button>
+        <button class="hook-src-btn${isExternal ? ' active' : ''}" data-hook-src="external" data-cid="${c.id}">Upload file</button>
       </div>
       <div id="hook-upload-${c.id}" style="${!isExternal ? 'display:none' : ''}">
         ${isExternal ? `
           <div class="hook-upload-status">
-            <span style="color:var(--green);font-size:11px">✓ Custom video uploaded</span>
+            <span style="color:var(--green);font-size:11px">✓ Custom background uploaded</span>
             <button class="btn btn-ghost btn-sm" data-hook-remove="${c.id}">Remove</button>
           </div>` : ''}
         <div class="hook-upload-input" id="hook-upload-input-${c.id}"${isExternal ? ' style="display:none"' : ''}>
-          <input type="file" accept="video/*" id="hook-file-${c.id}" style="display:none" />
+          <input type="file" accept="video/*,image/*" id="hook-file-${c.id}" style="display:none" />
           <button class="btn btn-ghost btn-sm" data-hook-pick="${c.id}">Choose file…</button>
           <span id="hook-fname-${c.id}" style="font-size:10px;color:var(--text-muted)"></span>
           <button class="btn btn-primary btn-sm" data-hook-upload="${c.id}" style="display:none">Upload</button>

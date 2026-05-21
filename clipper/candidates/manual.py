@@ -30,6 +30,7 @@ class ManualCandidateSource(CandidateSource):
         default_hook = spec.get("hook", {})
         default_hook_enabled = default_hook.get("enabled", True)
         default_hook_background = default_hook.get("background", "blur_self")
+        default_hook_duration = default_hook.get("duration")  # None → hook.py uses DEFAULT_HOOK_DURATION
         default_captions = spec.get("default_captions", True)
 
         candidates = []
@@ -56,6 +57,7 @@ class ManualCandidateSource(CandidateSource):
                     hook_preset=clip.get("hook_preset"),
                     rank=clip.get("rank"),
                     origin="manual",
+                    hook_duration=clip.get("hook_duration") if "hook_duration" in clip else default_hook_duration,
                 )
             )
         return candidates
