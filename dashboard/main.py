@@ -473,6 +473,18 @@ def api_get_presets():
     }
 
 
+# ── API: System ──────────────────────────────────────────────────────────────
+
+
+@app.get("/api/system")
+def api_system():
+    usage = shutil.disk_usage("C:/")
+    return {
+        "disk_free_gb": round(usage.free / (1024 ** 3), 1),
+        "disk_total_gb": round(usage.total / (1024 ** 3), 1),
+    }
+
+
 # ── API: History ──────────────────────────────────────────────────────────────
 
 

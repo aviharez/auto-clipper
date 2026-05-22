@@ -79,6 +79,14 @@ function updateWorkerStatus(jobs) {
   if (countEl) countEl.textContent = jobs.length || '';
 }
 
+async function updateDiskStatus() {
+  try {
+    const { disk_free_gb, disk_total_gb } = await api('GET', '/system');
+    const el = document.getElementById('disk-status');
+    if (el) el.textContent = `disk · ${disk_free_gb} GB free`;
+  } catch (_) { /* silently ignore if unavailable */ }
+}
+
 // ── Router ─────────────────────────────────────────────────────────────────
 
 function route() {
@@ -93,7 +101,7 @@ function route() {
 }
 
 window.addEventListener('hashchange', route);
-window.addEventListener('load', route);
+window.addEventListener('load', () => { route(); updateDiskStatus(); });
 
 // ── Job List ───────────────────────────────────────────────────────────────
 
@@ -528,6 +536,7 @@ async function renderJobList() {
   try {
     const jobs = await api('GET', '/jobs');
     updateWorkerStatus(jobs);
+    updateDiskStatus();
 
     if (!jobs.length) {
       const hdr = document.getElementById('job-table-header');
