@@ -316,7 +316,7 @@ async function setupNewJobPanel() {
   $('#btn-cancel-form').onclick  = closeNewJobModal;
   $('#btn-cancel-upload').onclick = closeNewJobModal;
   $('#btn-add-clip').onclick      = () => {
-    _formClips.push({ start: '', end: '', title: '', hook_text: '', hook_background: 'blur_self', caption_preset: '', hook_preset: '', hook_duration: '' });
+    _formClips.push({ start: '', end: '', title: '', hook_text: '', hook_background: 'blur_self', caption_preset: '', hook_preset: '', hook_duration: '', hook_broll_start: '', hook_broll_end: '' });
     renderFormClips();
   };
   $('#btn-form-submit').onclick = submitForm;
@@ -407,6 +407,18 @@ function renderFormClips() {
                  data-clip-idx="${i}" data-clip-field="hook_duration"
                  value="${clip.hook_duration || ''}" placeholder="Batch default" />
         </div>
+        <div class="form-field" id="form-broll-start-row-${i}"${clip.hook_background === 'external' ? ' style="display:none"' : ''}>
+          <label class="form-label">B-roll start <span style="font-weight:400;color:var(--text-muted)">(optional)</span></label>
+          <input class="form-input form-input-sm" type="text"
+                 data-clip-idx="${i}" data-clip-field="hook_broll_start"
+                 value="${escAttr(clip.hook_broll_start)}" placeholder="HH:MM:SS.mmm" />
+        </div>
+        <div class="form-field" id="form-broll-end-row-${i}"${clip.hook_background === 'external' ? ' style="display:none"' : ''}>
+          <label class="form-label">B-roll end <span style="font-weight:400;color:var(--text-muted)">(optional)</span></label>
+          <input class="form-input form-input-sm" type="text"
+                 data-clip-idx="${i}" data-clip-field="hook_broll_end"
+                 value="${escAttr(clip.hook_broll_end)}" placeholder="HH:MM:SS.mmm" />
+        </div>
       </div>
     </div>
   `).join('');
@@ -417,8 +429,13 @@ function renderFormClips() {
       inp.onchange = () => {
         _formClips[idx()][inp.dataset.clipField] = inp.value;
         if (inp.dataset.clipField === 'hook_background') {
-          const fileRow = document.getElementById(`form-hook-file-row-${idx()}`);
-          if (fileRow) fileRow.style.display = inp.value === 'external' ? '' : 'none';
+          const fileRow   = document.getElementById(`form-hook-file-row-${idx()}`);
+          const brollStartRow = document.getElementById(`form-broll-start-row-${idx()}`);
+          const brollEndRow   = document.getElementById(`form-broll-end-row-${idx()}`);
+          const isExternal = inp.value === 'external';
+          if (fileRow)       fileRow.style.display       = isExternal ? '' : 'none';
+          if (brollStartRow) brollStartRow.style.display = isExternal ? 'none' : '';
+          if (brollEndRow)   brollEndRow.style.display   = isExternal ? 'none' : '';
         }
       };
     } else {
@@ -492,10 +509,12 @@ async function submitForm() {
         start:          c.start.trim(),
         end:            c.end.trim(),
         title:          c.title.trim(),
-        hook_text:      c.hook_text?.trim() || null,
-        caption_preset: c.caption_preset || null,
-        hook_preset:    c.hook_preset    || null,
-        hook_duration:  c.hook_duration ? parseFloat(c.hook_duration) : null,
+        hook_text:        c.hook_text?.trim() || null,
+        caption_preset:   c.caption_preset || null,
+        hook_preset:      c.hook_preset    || null,
+        hook_duration:    c.hook_duration ? parseFloat(c.hook_duration) : null,
+        hook_broll_start: c.hook_broll_start?.trim() || null,
+        hook_broll_end:   c.hook_broll_end?.trim()   || null,
       })),
     });
 

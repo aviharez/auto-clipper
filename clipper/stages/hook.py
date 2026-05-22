@@ -56,6 +56,15 @@ def run(job: dict, cand_id: str, candidate: dict) -> Optional[str]:
         candidate.get("hook_background", "blur_self"), clip_dir
     )
 
+    broll_start = candidate.get("hook_broll_start")
+    broll_end   = candidate.get("hook_broll_end")
+    if bg_mode == "blur_self" and broll_start is not None and broll_end is not None:
+        broll_offset = broll_start - candidate["start"]
+        broll_length = broll_end - broll_start
+    else:
+        broll_offset = 0.0
+        broll_length = None
+
     _create_hook_segment(
         raw=str(raw),
         bg_mode=bg_mode,
@@ -64,6 +73,8 @@ def run(job: dict, cand_id: str, candidate: dict) -> Optional[str]:
         hook_text=candidate["hook_text"],
         duration=hook_duration,
         preset=preset,
+        broll_offset=broll_offset,
+        broll_length=broll_length,
     )
     transition = preset.get("transition", "cut")
     _concatenate(str(hook_out), str(main_clip), str(out_path), transition=transition, hook_duration=hook_duration)
@@ -110,6 +121,8 @@ def _create_hook_segment(
     hook_text: str,
     duration: float,
     preset: dict,
+    broll_offset: float = 0.0,
+    broll_length: Optional[float] = None,
 ):
     clip_dir = Path(out).parent
     ass_path = clip_dir / "hook_text.ass"
@@ -123,18 +136,27 @@ def _create_hook_segment(
     elif bg_mode == "video":
         _make_hook_video_bg(str(bg_file), out, ass_rel, fonts_rel, duration, preset)
     else:
-        _make_hook_blur_self(raw, out, ass_rel, fonts_rel, duration, preset)
+        _make_hook_blur_self(raw, out, ass_rel, fonts_rel, duration, preset,
+                             broll_offset=broll_offset, broll_length=broll_length)
 
 
 def _make_hook_blur_self(
-    src: str, out: str, ass_rel: str, fonts_rel: str, duration: float, preset: dict
+    src: str, out: str, ass_rel: str, fonts_rel: str, duration: float, preset: dict,
+    broll_offset: float = 0.0, broll_length: Optional[float] = None,
 ):
     darkness = preset.get("gradient_darkness", 0.75)
     # Gradient overlay: top 10% untouched; below 10% darkens linearly to darkness at bottom.
     # factor = 1.0 at y=10%, (1 - darkness) at y=100%.
     factor = f"if(lt(Y/H,0.1),1,1-min(1,(Y/H-0.1)/0.9)*{darkness:.3f})"
+
+    avail = min(duration, broll_length) if broll_length is not None else duration
+    trim_part = f"trim={broll_offset:.3f}:{broll_offset + avail:.3f},setpts=PTS-STARTPTS"
+    if broll_length is not None and broll_length < duration:
+        freeze = duration - broll_length
+        trim_part += f",tpad=stop_mode=clone:stop_duration={freeze:.3f}"
+
     vf = (
-        f"trim=0:{duration},setpts=PTS-STARTPTS,"
+        f"{trim_part},"
         f"geq=r='r(X,Y)*({factor})':g='g(X,Y)*({factor})':b='b(X,Y)*({factor})',"
         f"setsar=1,"
         f"ass={ass_rel}:fontsdir={fonts_rel}"

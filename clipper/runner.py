@@ -80,6 +80,8 @@ def _process_job(job: dict):
                 "rank": c.rank,
                 "origin": c.origin,
                 "hook_duration": c.hook_duration,
+                "hook_broll_start": c.hook_broll_start,
+                "hook_broll_end": c.hook_broll_end,
             })
 
             if staged_hook:

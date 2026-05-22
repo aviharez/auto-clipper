@@ -17,7 +17,9 @@ class Candidate:
     hook_preset: Optional[str] = None
     rank: Optional[int] = None          # reserved for ranked compilation (§8b)
     origin: Literal["manual", "auto"] = "manual"
-    hook_duration: Optional[float] = None  # per-clip override; None → DEFAULT_HOOK_DURATION
+    hook_duration: Optional[float] = None      # per-clip override; None → DEFAULT_HOOK_DURATION
+    hook_broll_start: Optional[float] = None  # source-video seconds; must be within [start, end]
+    hook_broll_end: Optional[float] = None    # source-video seconds; must be within [start, end]
 
     @property
     def duration(self) -> float:

@@ -99,6 +99,8 @@ class ClipFormItem(BaseModel):
     caption_preset: Optional[str] = None
     hook_preset: Optional[str] = None
     hook_duration: Optional[float] = None
+    hook_broll_start: Optional[str] = None  # timecode string; parsed by ManualCandidateSource
+    hook_broll_end: Optional[str] = None
 
 
 class JobFormBody(BaseModel):
@@ -155,6 +157,10 @@ async def api_create_job_from_form(body: JobFormBody):
             c["hook_preset"] = hook_preset
         if clip.hook_duration is not None:
             c["hook_duration"] = clip.hook_duration
+        if clip.hook_broll_start:
+            c["hook_broll_start"] = clip.hook_broll_start
+        if clip.hook_broll_end:
+            c["hook_broll_end"] = clip.hook_broll_end
         clips.append(c)
     spec["clips"] = clips
 

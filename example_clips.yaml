@@ -1,14 +1,64 @@
-source: https://www.youtube.com/watch?v=Nhj5PiDEqHU
-channel_name: "SNZ Clips"   # batch-level branding; omit to skip overlay
+source: https://www.youtube.com/watch?v=VmnoNfrHIDo
+channel_name: "Raditya Dika"   # batch-level branding; omit to skip overlay
 default_captions: true
 
 hook:
   enabled: true
-  duration: 3
+  duration: 1.5
   background: blur_self
 
 clips:
-  - start: "7:33"
-    end: "8:40"
-    title: "Tragedi Kostum Bola di Pernikahan Ari Kriting"
-    hook_text: "Niat hati mau meeting project gede, eh malah dijebak datang ke pernikahan Ari Kriting pakai kostum bola!"
+
+- start: "00:04:16.420"
+  end: "00:05:01.350"
+  title: "Margin 30% Itu Bunuh Restoran?"
+  hook_text: "[Margin 30%] justru bikin restoran [gagal]"
+  hook_broll_start: "00:04:47.500"
+  hook_broll_end: "00:04:49.000"
+  hook_preset: "insight_blue"
+  caption_preset: "insight_blue"
+
+- start: "00:12:43.150"
+  end: "00:13:06.500"
+  title: "Masalah Besar Bisnis F&B Indonesia"
+  hook_text: "Ekosistem F&B kita ternyata [nggak sehat]"
+  hook_broll_start: "00:13:00.200"
+  hook_broll_end: "00:13:01.700"
+  hook_preset: "debate_orange"
+  caption_preset: "debate_orange"
+
+- start: "00:19:31.420"
+  end: "00:20:25.100"
+  title: "Chef Juna: SDM Dapur Terlalu Manja"
+  hook_text: "[Anak sakit] bukan alasan buat [ngilang]"
+  hook_broll_start: "00:20:09.500"
+  hook_broll_end: "00:20:11.000"
+  hook_preset: "debate_orange"
+  caption_preset: "debate_orange"
+
+- start: "00:49:38.200"
+  end: "00:50:30.450"
+  title: "Rahasia Kotor Dapur yang Jarang Dibahas"
+  hook_text: "Chef bisa [cuan diam-diam] dari supplier?"
+  hook_broll_start: "00:49:58.500"
+  hook_broll_end: "00:50:00.000"
+  hook_preset: "debate_orange"
+  caption_preset: "debate_orange"
+
+- start: "00:54:15.500"
+  end: "00:55:00.200"
+  title: "Jangan Buka Restoran Cuma Karena Suka Makan"
+  hook_text: "[Punya uang] belum tentu siap buka restoran"
+  hook_broll_start: "00:54:39.100"
+  hook_broll_end: "00:54:40.600"
+  hook_preset: "insight_blue"
+  caption_preset: "insight_blue"
+
+- start: "00:59:12.100"
+  end: "01:00:02.300"
+  title: "Kenapa Tasting Menu Bikin Orang Bingung?"
+  hook_text: "24 course tapi tetap [nggak puas]?"
+  hook_broll_start: "00:59:43.500"
+  hook_broll_end: "00:59:45.000"
+  hook_preset: "insight_blue"
+  caption_preset: "insight_blue"

@@ -43,10 +43,28 @@ class ManualCandidateSource(CandidateSource):
             else:
                 hook_enabled = default_hook_enabled
 
+            start = _parse_timecode(clip["start"])
+            end   = _parse_timecode(clip["end"])
+
+            raw_bs = clip.get("hook_broll_start")
+            raw_be = clip.get("hook_broll_end")
+            if (raw_bs is None) != (raw_be is None):
+                raise ValueError(
+                    f"Clip '{clip.get('title')}': hook_broll_start and hook_broll_end must both be set or both omitted."
+                )
+            hook_broll_start = _parse_timecode(raw_bs) if raw_bs is not None else None
+            hook_broll_end   = _parse_timecode(raw_be) if raw_be is not None else None
+            if hook_broll_start is not None:
+                if not (start <= hook_broll_start < hook_broll_end <= end):
+                    raise ValueError(
+                        f"Clip '{clip.get('title')}': hook_broll_start/end ({raw_bs}–{raw_be}) "
+                        f"must satisfy start ≤ broll_start < broll_end ≤ end ({clip['start']}–{clip['end']})."
+                    )
+
             candidates.append(
                 Candidate(
-                    start=_parse_timecode(clip["start"]),
-                    end=_parse_timecode(clip["end"]),
+                    start=start,
+                    end=end,
                     title=clip["title"],
                     source_job_id=job["id"],
                     hook_text=clip.get("hook_text"),
@@ -58,6 +76,8 @@ class ManualCandidateSource(CandidateSource):
                     rank=clip.get("rank"),
                     origin="manual",
                     hook_duration=clip.get("hook_duration") if "hook_duration" in clip else default_hook_duration,
+                    hook_broll_start=hook_broll_start,
+                    hook_broll_end=hook_broll_end,
                 )
             )
         return candidates

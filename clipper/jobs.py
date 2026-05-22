@@ -31,6 +31,8 @@ def _migrate(conn: sqlite3.Connection):
         ("jobs", "download_progress", "INTEGER"),
         ("candidates", "hook_duration", "REAL"),
         ("candidates", "delivery_url", "TEXT"),
+        ("candidates", "hook_broll_start", "REAL"),
+        ("candidates", "hook_broll_end", "REAL"),
     ]
     for table, col, col_type in new_cols:
         try:
@@ -132,8 +134,8 @@ def insert_candidate(job_id: str, idx: int, cand: dict) -> str:
             """INSERT INTO candidates
                  (id, job_id, idx, start, end, title, hook_text, hook_enabled,
                   hook_background, needs_caption, caption_preset, hook_preset, rank, origin,
-                  hook_duration)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                  hook_duration, hook_broll_start, hook_broll_end)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 cand_id, job_id, idx,
                 cand["start"], cand["end"], cand["title"],
@@ -146,6 +148,8 @@ def insert_candidate(job_id: str, idx: int, cand: dict) -> str:
                 cand.get("rank"),
                 cand.get("origin", "manual"),
                 cand.get("hook_duration"),
+                cand.get("hook_broll_start"),
+                cand.get("hook_broll_end"),
             ),
         )
     clip_dir = JOBS_DIR / job_id / "clips" / cand_id
