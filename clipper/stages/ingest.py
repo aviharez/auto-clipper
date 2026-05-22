@@ -1,4 +1,5 @@
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -21,11 +22,20 @@ def _find_source_files(job_dir: Path):
     return video, audio
 
 
+_PCT_RE = re.compile(r'\[download\]\s+([\d.]+)%')
+
+
 def run(job: dict) -> dict:
     """Download source video + metadata. Returns updated job fields."""
     from clipper.config import JOBS_DIR
-    job_dir = JOBS_DIR / job["id"]
+    import clipper.jobs as _db
+
+    job_id  = job["id"]
+    job_dir = JOBS_DIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
+
+    def _on_progress(pct: int):
+        _db.update_job(job_id, download_progress=pct)
 
     merged_path = job_dir / "source.mp4"
     metadata_path = job_dir / "metadata.json"
@@ -45,7 +55,7 @@ def run(job: dict) -> dict:
             video.rename(merged_path)
         else:
             # Nothing useful on disk — run yt-dlp.
-            _yt_dlp_download(job["source_url"], job_dir)
+            _yt_dlp_download(job["source_url"], job_dir, on_progress=_on_progress)
 
             # Rename .info.json written by yt-dlp
             for f in job_dir.glob("source.info.json"):
@@ -83,8 +93,8 @@ def run(job: dict) -> dict:
     }
 
 
-def _yt_dlp_download(source_url: str, job_dir: Path):
-    subprocess.run(
+def _yt_dlp_download(source_url: str, job_dir: Path, on_progress=None):
+    proc = subprocess.Popen(
         [
             "yt-dlp",
             "--format",
@@ -97,8 +107,21 @@ def _yt_dlp_download(source_url: str, job_dir: Path):
             "--output", str(job_dir / "source.%(ext)s"),
             source_url,
         ],
-        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
     )
+
+    for line in proc.stdout:
+        if on_progress:
+            m = _PCT_RE.search(line)
+            if m:
+                on_progress(int(float(m.group(1))))
+
+    proc.wait()
+    if proc.returncode != 0:
+        raise subprocess.CalledProcessError(proc.returncode, "yt-dlp")
 
 
 def _ffmpeg_merge(video: Path, audio: Path, out: Path):

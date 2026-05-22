@@ -13,11 +13,13 @@ from dataclasses import asdict
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
+import shutil
+
 import clipper.jobs as db
 from clipper.assembly.individual import IndividualAssembler
 from clipper.candidates.manual import ManualCandidateSource
 from clipper.config import JOBS_DIR
-from clipper.stages import caption, cut, hook, ingest
+from clipper.stages import branding, caption, cut, hook, ingest, watermark
 from clipper.transcribe.api import AssemblyAITranscriber
 
 log = logging.getLogger(__name__)
@@ -55,20 +57,35 @@ def _process_job(job: dict):
         source = ManualCandidateSource(job["yaml_path"])
         candidates = source.generate(job)
         cand_ids = []
+        staged_hooks_dir = JOBS_DIR / job_id / "staged_hooks"
         for idx, c in enumerate(candidates):
+            # Find a pre-staged hook file for this clip index (any extension).
+            staged_hook = None
+            if staged_hooks_dir.exists():
+                for p in staged_hooks_dir.glob(f"{idx}.*"):
+                    staged_hook = p
+                    break
+            hook_background = "external" if staged_hook else c.hook_background
+
             cid = db.insert_candidate(job_id, idx, {
                 "start": c.start,
                 "end": c.end,
                 "title": c.title,
                 "hook_text": c.hook_text,
                 "hook_enabled": c.hook_enabled,
-                "hook_background": c.hook_background,
+                "hook_background": hook_background,
                 "needs_caption": c.needs_caption,
                 "caption_preset": c.caption_preset,
                 "hook_preset": c.hook_preset,
                 "rank": c.rank,
                 "origin": c.origin,
+                "hook_duration": c.hook_duration,
             })
+
+            if staged_hook:
+                clip_dir = JOBS_DIR / job_id / "clips" / cid
+                shutil.move(str(staged_hook), str(clip_dir / f"hook_background{staged_hook.suffix}"))
+
             cand_ids.append(cid)
 
         # Stage 3: cut each candidate
@@ -111,6 +128,9 @@ def _cut_and_assemble(job: dict, cand_id: str):
         if candidate["hook_enabled"]:
             db.update_candidate(cand_id, status="creating_hook")
             hook.run(job, cand_id, candidate)
+
+        branding.run(job, cand_id, candidate)
+        watermark.run(job, cand_id, candidate)
 
         final_path = _assembler.assemble(cand_id, job, candidate)
         db.update_candidate(cand_id, status="ready", output_path=final_path)
@@ -164,6 +184,9 @@ def _restyle(job: dict, cand_id: str, stage: str):
             if candidate["hook_enabled"] and (candidate.get("hook_text") or "").strip():
                 db.update_candidate(cand_id, status="creating_hook", error=None)
                 hook.run(job, cand_id, candidate)
+
+        branding.run(job, cand_id, candidate)
+        watermark.run(job, cand_id, candidate)
 
         final_path = _assembler.assemble(cand_id, job, candidate)
         db.update_candidate(cand_id, status="ready", output_path=final_path)

@@ -22,7 +22,9 @@ def run(job: dict, cand_id: str, candidate: dict) -> str:
     ass_path = clip_dir / "captions.ass"
     out_path = clip_dir / "captioned.mp4"
 
-    words = json.loads(words_path.read_text(encoding="utf-8"))
+    edited_path = clip_dir / "words_edited.json"
+    src_path = edited_path if edited_path.exists() else words_path
+    words = json.loads(src_path.read_text(encoding="utf-8"))
     if not words:
         log.warning("No words found for candidate %s — skipping captions", cand_id)
         import shutil
@@ -84,6 +86,12 @@ def _build_ass(words: list[dict], preset: dict) -> str:
     outline_w = preset["outline_width"]
     shadow = 2 if preset["shadow"] else 0
     pop = preset.get("pop_animation", False)
+    border_style = preset.get("border_style", 1)
+    # In ASS, BorderStyle=3 uses OutlineColour as the opaque box fill (not BackColour).
+    # Override c_outline with the box_color when in box mode; BackColour stays transparent.
+    if border_style == 3:
+        c_outline = _rgb_to_ass(preset["box_color"])
+    back_color = "&H00000000&"
 
     header = "\n".join([
         "[Script Info]",
@@ -98,8 +106,8 @@ def _build_ass(words: list[dict], preset: dict) -> str:
         " BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
         (
             f"Style: Default,{font_family},{font_size},"
-            f"{c_normal},&H000000FF&,{c_outline},&H00000000&,"
-            f"-1,0,0,0,100,100,0,0,1,{outline_w},{shadow},2,10,10,10,1"
+            f"{c_normal},&H000000FF&,{c_outline},{back_color},"
+            f"-1,0,0,0,100,100,0,0,{border_style},{outline_w},{shadow},2,10,10,10,1"
         ),
         "",
         "[Events]",
@@ -122,7 +130,7 @@ def _build_ass(words: list[dict], preset: dict) -> str:
             # Build text: each word with colour override for the active one.
             parts = []
             for j, w in enumerate(chunk):
-                display = w["text"].rstrip(".,!?;:\"'”。")
+                display = w["text"].rstrip('.,!?;:\"\u2018\u2019\u201c\u201d\u3002').lower()
                 if j == i:
                     # Active word: switch to highlight colour, then reset.
                     parts.append(f"{{\\1c{c_active}}}{display}{{\\1c{c_normal}}}")

@@ -2,15 +2,46 @@ import os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).parent.parent
+
+# Ensure ffmpeg/ffprobe are on PATH for all subprocess calls in this process.
+_FFMPEG_BIN = Path(r"C:\ffmpeg\bin")
+if _FFMPEG_BIN.exists() and str(_FFMPEG_BIN) not in os.environ.get("PATH", ""):
+    os.environ["PATH"] = str(_FFMPEG_BIN) + os.pathsep + os.environ.get("PATH", "")
 DATA_DIR = BASE_DIR / "data"
 DB_PATH = DATA_DIR / "jobs.db"
 JOBS_DIR = DATA_DIR / "jobs"
 ASSETS_DIR = BASE_DIR / "assets"
 FONTS_DIR = ASSETS_DIR / "fonts"
+LOGOS_DIR = ASSETS_DIR / "logos"
+YOUTUBE_LOGO_PATH = LOGOS_DIR / "youtube.png"
+# Logo natural dimensions (180×127) — used in branding.py to compute scaled width.
+YOUTUBE_LOGO_ASPECT = 180 / 127  # width / height
 
-YOUTUBE_CREDENTIALS_FILE = BASE_DIR / "credentials" / "client_secret.json"
-YOUTUBE_TOKEN_FILE = BASE_DIR / "credentials" / "token.json"
-YOUTUBE_SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+# Branding overlay — logo + channel name in top-left corner of every clip.
+BRANDING_LOGO_HEIGHT_FRAC = 0.015   # logo height as fraction of CLIP_HEIGHT (~65px at 1920)
+BRANDING_MARGIN_PX = 42             # pixels from top-left edge
+BRANDING_FONT_FILE = str(FONTS_DIR / "Montserrat-Bold.ttf")
+BRANDING_FONT_FAMILY = "Montserrat"
+BRANDING_FONT_SIZE_FRAC = 0.015     # channel name font size as fraction of CLIP_HEIGHT (~36px)
+
+# Delivery (§2.7).
+# User-configurable via environment variables or by editing the values below.
+import os as _os
+
+# Local deliverer — target folder on this machine.
+DELIVERY_LOCAL_OUTPUT_DIR = (
+    Path(_os.environ["DELIVERY_LOCAL_OUTPUT_DIR"])
+    if _os.environ.get("DELIVERY_LOCAL_OUTPUT_DIR")
+    else Path.home() / "Documents" / "clipper-output"
+)
+
+# Google Drive deliverer — rclone remote name and destination folder.
+# Run 'rclone config' once to set up the remote, then set these values.
+GDRIVE_RCLONE_REMOTE = _os.environ.get("GDRIVE_RCLONE_REMOTE", "gdrive")
+GDRIVE_DESTINATION_FOLDER = _os.environ.get("GDRIVE_DESTINATION_FOLDER", "clipper-output")
+
+# Which deliverer to use by default: "local" or "gdrive".
+DEFAULT_DELIVERER = _os.environ.get("DEFAULT_DELIVERER", "local")
 
 # Target clip resolution (9:16 vertical)
 CLIP_WIDTH = 1080
@@ -27,7 +58,7 @@ CAPTION_PRESETS = {
         "words_on_screen": 3,
         "font_file": str(FONTS_DIR / "Montserrat-Bold.ttf"),
         "font_family": "Montserrat",
-        "font_size_pct": 9,
+        "font_size_pct": 7,
         "color_normal": "#FFFFFF",
         "color_active": "#FFE000",
         "outline_color": "#000000",
@@ -40,7 +71,7 @@ CAPTION_PRESETS = {
         "words_on_screen": 2,
         "font_file": str(FONTS_DIR / "Inter-28pt-Bold.ttf"),
         "font_family": "Inter 28pt",
-        "font_size_pct": 8,
+        "font_size_pct": 6,
         "color_normal": "#FFFFFF",
         "color_active": "#FFFFFF",
         "outline_color": "#000000",
@@ -49,12 +80,173 @@ CAPTION_PRESETS = {
         "position_from_bottom_pct": 28,
         "pop_animation": False,
     },
+    # BorderStyle=3: opaque box behind each word (one word at a time).
+    # outline_width controls box padding rather than stroke width in this mode.
+    "box_highlight": {
+        "words_on_screen": 1,
+        "font_file": str(FONTS_DIR / "Montserrat-Bold.ttf"),
+        "font_family": "Montserrat",
+        "font_size_pct": 8,
+        "color_normal": "#000000",
+        "color_active": "#000000",
+        "outline_color": "#000000",
+        "outline_width": 12,
+        "shadow": False,
+        "border_style": 3,
+        "box_color": "#FFE000",
+        "position_from_bottom_pct": 28,
+        "pop_animation": False,
+    },
+    "neon_green": {
+        "words_on_screen": 3,
+        "font_file": str(FONTS_DIR / "Montserrat-Bold.ttf"),
+        "font_family": "Montserrat",
+        "font_size_pct": 4,
+        "color_normal": "#FFFFFF",
+        "color_active": "#00FF7F",
+        "outline_color": "#000000",
+        "outline_width": 4,
+        "shadow": True,
+        "position_from_bottom_pct": 30,
+        "pop_animation": False,
+    },
+    "fire_orange": {
+        "words_on_screen": 2,
+        "font_file": str(FONTS_DIR / "Montserrat-Bold.ttf"),
+        "font_family": "Montserrat",
+        "font_size_pct": 7,
+        "color_normal": "#FFFFFF",
+        "color_active": "#FF4500",
+        "outline_color": "#000000",
+        "outline_width": 8,
+        "shadow": True,
+        "position_from_bottom_pct": 30,
+        "pop_animation": True,
+    },
+    "vibrant_cyan": {
+        "words_on_screen": 3,
+        "font_file": str(FONTS_DIR / "Inter-28pt-Bold.ttf"),
+        "font_family": "Inter 28pt",
+        "font_size_pct": 6,
+        "color_normal": "#FFFFFF",
+        "color_active": "#00CFFF",
+        "outline_color": "#000000",
+        "outline_width": 5,
+        "shadow": True,
+        "position_from_bottom_pct": 25,
+        "pop_animation": False,
+    },
 }
 
 DEFAULT_CAPTION_PRESET = "bold_yellow"
 
+# Hook presets — control the teaser segment's text style and gradient darkness.
+# gradient_darkness: how much the bottom 90% of the frame is darkened.
+#   0.0 = no darkening; 1.0 = fully black at the very bottom.
+#   Top 10% of the frame is always left untouched (transparent).
+#   The gradient starts at 10% from the top and reaches (1 - gradient_darkness)
+#   brightness at the bottom edge.
+HOOK_PRESETS = {
+    "blur_dark": {
+        "font_family": "Anton",
+        "font_file": str(FONTS_DIR / "Anton-Regular.ttf"),
+        "font_size_pct": 7,
+        "text_color": "#FFFFFF",
+        "outline_width": 6,
+        "shadow": True,
+        "gradient_darkness": 0.75,
+        "transition": "cut",
+    },
+    "bold_punch": {
+        "font_family": "Anton",
+        "font_file": str(FONTS_DIR / "Anton-Regular.ttf"),
+        "font_size_pct": 9,
+        "text_color": "#FFE000",
+        "outline_width": 8,
+        "shadow": True,
+        "gradient_darkness": 0.85,
+        "transition": "cut",
+    },
+    # dark_minimal favours a smooth lead-in → fade suits the polished aesthetic.
+    "dark_minimal": {
+        "font_family": "Anton",
+        "font_file": str(FONTS_DIR / "Anton-Regular.ttf"),
+        "font_size_pct": 6,
+        "text_color": "#FFFFFF",
+        "outline_width": 2,
+        "shadow": False,
+        "gradient_darkness": 0.88,
+        "transition": "fade",
+    },
+    "high_contrast": {
+        "font_family": "Anton",
+        "font_file": str(FONTS_DIR / "Anton-Regular.ttf"),
+        "font_size_pct": 8,
+        "text_color": "#FFFFFF",
+        "outline_width": 12,
+        "shadow": False,
+        "gradient_darkness": 0.60,
+        "transition": "cut",
+    },
+    # TikTok-style: text in lower half, bold all-caps.
+    # Mark highlighted words/phrases in hook_text with [brackets]: "PERCAYA [NGGAK]?"
+    # position="lower" anchors text ~20% from bottom (above UI chrome).
+    # Zero brackets is valid — plain styled text, no highlight applied.
+    "tiktok_green": {
+        # "font_family": "Anton",
+        # "font_file": str(FONTS_DIR / "Anton-Regular.ttf"),
+        "font_file": str(FONTS_DIR / "Montserrat-Black.ttf"),
+        "font_family": "Montserrat Black",
+        "font_size_pct": 5,
+        "text_color": "#FFFFFF",
+        "highlight_color": "#00FF7F",
+        "outline_width": 6,
+        "shadow": False,
+        "gradient_darkness": 1.00,
+        "position": "lower",
+        "text_transform": "upper",
+        "margin_h": 2,
+        "line_spacing": 0.85,
+        "transition": "fade",
+    },
+    "tiktok_yellow": {
+        "font_family": "Anton",
+        "font_file": str(FONTS_DIR / "Anton-Regular.ttf"),
+        "font_size_pct": 5,
+        "text_color": "#FFFFFF",
+        "highlight_color": "#FFE000",
+        "outline_width": 6,
+        "shadow": False,
+        "gradient_darkness": 0.80,
+        "position": "lower",
+        "text_transform": "upper",
+        "margin_h": 20,
+        "transition": "fade",
+    },
+    # tiktok_box: entire line on a white box (BorderStyle=3), dark text.
+    # No per-keyword syntax needed — the box frames the whole hook line.
+    # slide_up matches the card/reveal motif of the box style.
+    "tiktok_box": {
+        "font_family": "Anton",
+        "font_file": str(FONTS_DIR / "Anton-Regular.ttf"),
+        "font_size_pct": 5,
+        "text_color": "#111111",
+        "outline_width": 14,
+        "shadow": False,
+        "border_style": 3,
+        "box_color": "#FFFFFF",
+        "gradient_darkness": 0.82,
+        "position": "lower",
+        "text_transform": "upper",
+        "margin_h": 20,
+        "transition": "slide_up",
+    },
+}
+
+DEFAULT_HOOK_PRESET = "blur_dark"
+
 DEFAULT_HOOK_ENABLED = True
-DEFAULT_HOOK_DURATION = 3
+DEFAULT_HOOK_DURATION = 1
 DEFAULT_HOOK_BACKGROUND = "blur_self"
 
 # Transcription
@@ -89,3 +281,13 @@ REFRAME_CUT_REFINE_MARGIN = 0.20     # the 5fps scan locates a cut only to its ~
 REFRAME_CLUSTER_GAP_FRAC = 0.12      # cx gap > this frac of width separates face clusters
 REFRAME_SUBJECT_MIN_COVERAGE = 0.55  # a cluster present in >= this frac of a shot's frames
                                      # is a real subject (else: detector noise)
+
+# ── Watermark (§2.6.4) ────────────────────────────────────────────────────────
+# Small bottom-center text on every clip, starting after the hook segment.
+# Single-channel tool: text lives here. Promote to a batch input if multi-channel
+# support is ever needed.
+WATERMARK_TEXT = "Seporsi Obrolan"
+WATERMARK_FONT_FILE = str(FONTS_DIR / "Montserrat-Bold.ttf")
+WATERMARK_FONT_SIZE_FRAC = 0.020    # ~30 px at 1920 height — unobtrusive
+WATERMARK_COLOR = "#888888"         # dark-gray, subtle against any background
+WATERMARK_MARGIN_BOTTOM_PX = 160   # gap between text baseline and frame bottom

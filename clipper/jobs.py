@@ -24,6 +24,21 @@ def get_conn() -> sqlite3.Connection:
     return conn
 
 
+def _migrate(conn: sqlite3.Connection):
+    """Add columns that were introduced after the initial schema without dropping data."""
+    new_cols = [
+        ("jobs", "channel_name", "TEXT"),
+        ("jobs", "download_progress", "INTEGER"),
+        ("candidates", "hook_duration", "REAL"),
+        ("candidates", "delivery_url", "TEXT"),
+    ]
+    for table, col, col_type in new_cols:
+        try:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")
+        except sqlite3.OperationalError:
+            pass  # column already exists
+
+
 def init_db():
     _ensure_dirs()
     with get_conn() as conn:
@@ -37,8 +52,10 @@ def init_db():
                 updated_at  TEXT NOT NULL,
                 yaml_path   TEXT,
                 source_video_path TEXT,
-                metadata_json     TEXT
+                metadata_json     TEXT,
+                channel_name      TEXT
             );
+
             CREATE TABLE IF NOT EXISTS candidates (
                 id              TEXT PRIMARY KEY,
                 job_id          TEXT NOT NULL,
@@ -58,23 +75,25 @@ def init_db():
                 error           TEXT,
                 output_path     TEXT,
                 approved        INTEGER NOT NULL DEFAULT 0,
+                delivery_url    TEXT,
                 youtube_url     TEXT,
                 FOREIGN KEY (job_id) REFERENCES jobs(id)
             );
         """)
+        _migrate(conn)
 
 
 # ── Jobs ────────────────────────────────────────────────────────────────────
 
 
-def create_job(source_url: str, yaml_path: str) -> str:
+def create_job(source_url: str, yaml_path: str, channel_name: str = None) -> str:
     job_id = str(uuid.uuid4())
     now = _now()
     with get_conn() as conn:
         conn.execute(
-            "INSERT INTO jobs (id, source_url, status, created_at, updated_at, yaml_path)"
-            " VALUES (?, ?, 'pending', ?, ?, ?)",
-            (job_id, source_url, now, now, yaml_path),
+            "INSERT INTO jobs (id, source_url, status, created_at, updated_at, yaml_path, channel_name)"
+            " VALUES (?, ?, 'pending', ?, ?, ?, ?)",
+            (job_id, source_url, now, now, yaml_path, channel_name or None),
         )
     job_dir = JOBS_DIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
@@ -112,8 +131,9 @@ def insert_candidate(job_id: str, idx: int, cand: dict) -> str:
         conn.execute(
             """INSERT INTO candidates
                  (id, job_id, idx, start, end, title, hook_text, hook_enabled,
-                  hook_background, needs_caption, caption_preset, hook_preset, rank, origin)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                  hook_background, needs_caption, caption_preset, hook_preset, rank, origin,
+                  hook_duration)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 cand_id, job_id, idx,
                 cand["start"], cand["end"], cand["title"],
@@ -125,6 +145,7 @@ def insert_candidate(job_id: str, idx: int, cand: dict) -> str:
                 cand.get("hook_preset"),
                 cand.get("rank"),
                 cand.get("origin", "manual"),
+                cand.get("hook_duration"),
             ),
         )
     clip_dir = JOBS_DIR / job_id / "clips" / cand_id

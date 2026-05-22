@@ -103,7 +103,11 @@ clipper/
     cut.py           # ffmpeg -> per-candidate clip, PRECISE (re-encode), 9:16 reframe
     hook.py          # build 2-4s opener segment, prepend to main clip
     caption.py       # burn word-level "viral style" captions (ASS-based)
-    publish.py       # YouTube Data API, scheduled
+  delivery/          # swappable seam — moves finished clip to its destination
+    base.py          # Deliverer interface: .deliver(clip_file, job) -> status
+    local.py         # copy to user-configured output folder (BUILD FIRST; default)
+    gdrive.py        # rclone-based upload to Google Drive (added in 2.7.2)
+    # NOTE: pre-2.7 there was a stages/publish.py (YouTube Data API). Retired in 2.7.
   assembly/          # final render step — swappable; runs AFTER candidates are cut/styled
     base.py          # Assembler interface: .assemble(styled_clips, job) -> output(s)
     individual.py    # each candidate -> its own video  (BUILD FIRST; default)
@@ -570,8 +574,9 @@ Number cards in ranked mode are the assembler's concern, not the caption/hook st
 - `stages/cut.py` with **precise re-encode** + **Tier 1 fixed center crop**
 - `assembly/individual.py` (the only assembler in initial scope)
 - `dashboard/` as a **local FastAPI web app** + preview + **Layer 2 manual nudge only**
-- `stages/publish.py` (manual trigger acceptable here)
-- Goal: a real clip goes in as a timestamp and comes out uploaded. No captions, no hook,
+- `stages/publish.py` (manual trigger acceptable here) — NOTE: this was the
+  Iteration-1 build; refactored to `delivery/local.py` in Iteration 2.7
+- Goal: a real clip goes in as a timestamp and comes out delivered. No captions, no hook,
   no tracking yet.
 
 **Iteration 2 — make it look professional.**
@@ -719,6 +724,210 @@ re-running anything dependent on raw machine output (boundary suggestion, future
 features) does not lose ground truth. Transcript is now a two-version document, not
 a single mutable field.
 
+**Iteration 2.6 — Visual polish.**
+
+> Added after Iteration 2.5 shipped and was used in production. These are NOT new
+> structural features — they are quality tuning of the final clip's visual output,
+> attaching to existing components (`hook.py`, `caption.py`, `config.py`). Same
+> execution discipline as before: ordered steps, one at a time, each tested. Named
+> "2.6" not "3" because it is a polish layer over 2.5, not a structural new mode.
+> (Iteration 3 remains skipped — see below.)
+
+- **Step 2.6.1 — TikTok-style hook presets (3 new presets).** Add three new
+  `hook_presets` entries to `config.py` characterized by: text positioned in the
+  **lower half** of the frame (not center-dominant); bold all-caps; a single
+  **highlighted keyword or phrase** per line (bright color background or colored
+  text — green-neon, yellow, red); strong outline for legibility over any
+  background. Variation across the three presets is by **font choice + highlight
+  color + box-vs-no-box** (one preset uses a white box behind text as an
+  alternative to per-word highlight). The renderer is extended to support
+  lower-half positioning and per-word/per-phrase highlight (ASS supports both via
+  per-line styling). No architecture change — the preset system was designed for
+  this since ledger #32. Reference: the user's TikTok-screenshot example
+  (lower-half text, bright-green keyword highlight, video visible above).
+
+  **Highlight mechanism — inline `[...]` syntax in `hook_text`.** What gets
+  highlighted is editorial judgment, so the user marks it directly in the text.
+  Words or phrases wrapped in square brackets render with the preset's highlight
+  treatment (color, box, etc); everything outside brackets renders as the
+  preset's normal text style. Examples:
+
+  ```yaml
+  hook_text: "TIKTOKERS FOLLOWERS [20JT] JALAN DI MALL [GAK ADA YANG MINTA FOTO]"
+  hook_text: "PERCAYA [NGGAK]?"
+  hook_text: "BIASA AJA, NGGAK ADA YANG SPESIAL"   # zero highlights = valid
+  ```
+
+  Rules: any number of `[...]` segments allowed (no cap); brackets may contain a
+  single word or a multi-word phrase; hook text with zero brackets renders as
+  plain styled text (valid case — not every hook needs highlight). The renderer
+  strips the bracket characters before rendering; they exist only as markers in
+  source text. Bracket characters themselves never appear in the rendered output.
+
+- **Step 2.6.2 — Reverse 2.5.5 + image background + max-duration field.**
+  THREE related sub-changes to hook handling, all in `hook.py`:
+  (a) **Reverse the 2.5.5 user-modification** in which uploaded hook video
+  suppressed generated text. Now: uploaded video/image is ALWAYS used as
+  background only; hook text is ALWAYS generated using the chosen preset (2.6.1
+  presets or `blur_self`-paired presets). Behavior is uniform regardless of
+  background source — no more "if uploaded then skip text" branch.
+  (b) **Add image-file support** alongside video. The hook renderer now has three
+  background paths: `blur_self` (default, frames from the main clip blurred);
+  uploaded video (clipped to hook duration); uploaded image (displayed static for
+  hook duration). Detection by file extension. No new `Candidate` field — the
+  existing `hook_background` field accepts any of the three.
+  (c) **Add `hook_duration` field at batch level** in `config.py` and the input
+  form, plus optional per-clip `hook_duration` override on `Candidate`. When the
+  uploaded asset is a video longer than `hook_duration`, it is trimmed to fit.
+  When shorter, behavior is to loop the asset OR freeze the last frame — pick
+  one and document it as the locked behavior (recommendation: freeze last frame;
+  looping short video can look glitchy at the seam).
+
+- **Step 2.6.3 — Hook→content transition.** Add a transition layer in `hook.py`
+  between the hook segment and the main clip. Strictly **2–3 transition options
+  only** (e.g. `cut` (no transition, default), `fade` (0.25s cross-fade), and
+  `slide_up` (hook slides off the top while main clip enters from bottom,
+  ~0.3s)). Transition choice is a field on the hook preset (`transition: fade`),
+  not a free parameter on every clip. Duration is fixed per transition type, not
+  user-tunable. The pre-2.6 hard requirement from §7 (hook and main clip have
+  identical spec) still applies — transitions ride on top of that, they do not
+  replace it.
+
+- **Step 2.6.4 — Channel watermark.** New overlay step (extend `caption.py` or
+  add a tiny `watermark.py` — implementer's choice based on code organization).
+  Renders a small text watermark at the bottom-center of the frame, dark-gray
+  color, small font, **starting at `hook_duration` and continuing until end of
+  clip** (not visible during the hook segment). For now, the watermark text is
+  the string `"Daily Clip"` stored as a config value (`watermark_text` in
+  `config.py`), not a per-batch input field. Hardcoded-as-config because the user
+  currently has one channel; if multi-channel support is ever needed, the config
+  value is trivially promoted to a batch-level input — but not before that need
+  is real.
+
+**Locked rationale (Iteration 2.6 ordering).** 2.6.1 first because it produces
+the most visible quality jump and gives a concrete reference for subsequent steps.
+2.6.2 second because it unifies hook behavior (uniform code path is cleaner than
+branching). 2.6.3 third because transition design benefits from already having
+finalized hook visuals. 2.6.4 last because it is the simplest and blocks nothing.
+
+**Locked rationale (highlight syntax is inline `[...]`, not a separate field).**
+Marking the highlight inline keeps the highlighted text *literally identical* to
+the text in the hook line — impossible to desync. A separate `hook_highlight`
+field would require the user to keep two strings in sync; any mismatch (typo,
+case, punctuation) silently fails (no highlight rendered, no error). Inline
+syntax also requires no extra typing decision: while writing the hook, the user
+just wraps the word they're already typing. The choice of `[...]` over `*...*`
+or `(...)` is because square brackets rarely appear naturally in Indonesian or
+English hook text and have no Markdown-emphasis collision.
+
+**Locked rationale (no cap on highlight count).** The earlier instinct to cap at
+2 highlights per hook was protection against users diluting visual focus by
+highlighting everything. That protection is unnecessary here: the tool is
+single-user (the user IS the editor and exercises judgment), and the review page
+gives an immediate visual feedback loop — if a hook looks too busy, the user
+edits the brackets and regenerates. Imposing a cap would also force renderer
+logic ("take first 2, log warning for rest") that is pure complexity for no
+real-world payoff. Trust the user; remove the limit.
+
+**Locked rationale (reversing 2.5.5).** The 2.5.5 user-modification (uploaded hook
+video → suppress generated text) was a reasonable judgment at the time: it assumed
+the uploaded video would self-contain its own text. Real use showed this loses the
+ability to restyle text via presets (presets only apply to generated text). The
+reversal restores preset coverage to all hook variants, which is the more useful
+default given the rich 2.6.1 preset library. The user-modification is not "wrong"
+— it is replaced by a better-informed decision after seeing the system in use.
+This kind of revision based on real usage is the intended development pattern, not
+an exception to it.
+
+**Locked rationale (transition library kept tiny).** DIY clip tools most often look
+amateur precisely because they offer 20+ flashy transitions (zoom, rotate, swipe,
+flash, glitch). Two or three subtle transitions are enough and look more
+professional. Resist requests to add more — the constraint is the point. If a
+specific transition is ever needed beyond the three, add it deliberately to the
+preset library, do not expose a generic "transition picker" to users.
+
+**Locked rationale (watermark hardcoded-as-config, not input field).** With one
+channel, a per-batch input field would be friction without value. Storing as a
+config value gives the same flexibility for the user (one place to change it) with
+none of the UI clutter. Promoting to an input field is a one-line change when
+multi-channel actually exists — premature flexibility is not free.
+
+**Iteration 2.7 — Delivery refactor (publish → delivery seam).**
+
+> Added after the user realized their actual workflow uploads to multiple social
+> platforms (not only YouTube), and they need the finished clip available for
+> manual upload from devices other than the laptop. The existing `publish.py`
+> (YouTube Data API) is replaced by a swappable `delivery/` seam — same pattern
+> as `Transcriber`, `CandidateSource`, `Assembler`, and scoring signals. Two
+> implementations are built; YouTube auto-publish is retired (was never the
+> actual delivery target in practice).
+
+> **Terminology note.** Earlier sections of this document (§1, §2, §8, build
+> order, ledger) still mention `publish` / `publish.py` / `uploaded` in their
+> original Iteration-1 wording. Those references are preserved as historical
+> context — they describe the system as it was when those decisions were made.
+> From Iteration 2.7 forward, the current vocabulary is `delivery` / `delivered`
+> (with per-deliverer suffixes like `delivered_local`, `delivered_gdrive`). When
+> reading the document, treat any `publish` reference outside of §2.7 as
+> historical; the active stage name is `delivery`.
+
+- **Step 2.7.1 — Refactor `publish.py` into `delivery/` seam with `local.py`
+  only.** Create `delivery/base.py` defining a `Deliverer` interface
+  (`.deliver(clip_file, job) -> status`). Create `delivery/local.py` that copies
+  the finished clip file from the job working directory to a user-configured
+  output folder (e.g. `~/clipper-output/`). Folder path lives in `config.py`.
+  Remove `stages/publish.py` and remove the YouTube Data API dependency entirely
+  — it is not used. Update the runner to call `delivery/` instead of `publish`.
+  Update history status vocabulary: `uploaded` → `delivered` (and consider a
+  per-deliverer suffix like `delivered_local`, future-proof for `delivered_gdrive`).
+  The dashboard "Upload approved" button becomes "Deliver approved." Build and
+  test this alone first — the seam must work end-to-end with the simplest
+  possible deliverer before adding any cloud target.
+
+- **Step 2.7.2 — Add `delivery/gdrive.py` for multi-device access.** Implement a
+  Google Drive deliverer using **rclone** as the transport layer
+  (`rclone copy <clip_file> gdrive:<folder>`). The user installs and configures
+  rclone once outside the app (`rclone config`); the app shells out to rclone
+  commands. Configuration in `config.py`: which rclone remote to use, which
+  destination folder. Per-batch (or eventually per-clip) selector in the
+  dashboard for which deliverer to use; default selectable in `config.py`.
+  History gains `delivered_gdrive` status.
+
+**Locked rationale (delivery seam, not just renaming `publish`).** The existing
+`publish.py` name is wrong for the new behavior — the clip is not being
+published anywhere, it is being moved to a location for the user to upload
+manually. Beyond naming, the future-likely need (auto-upload to TikTok,
+Instagram Reels, etc.) is a list of additional targets, each with its own auth
+and upload semantics. A swappable seam is the right shape for "N delivery
+targets, each independent." Same architecture pattern as the rest of the system
+— consistency matters for the next person (or future-you) reading the code.
+
+**Locked rationale (`local.py` first, not `gdrive.py` directly).** Building
+`local.py` first proves the seam contract works end-to-end with the simplest
+possible implementation — copy a file. If something is wrong with the
+runner-to-deliverer wiring, status updates, or interface design, debug it once
+in a deliverer where the only thing that can fail is `shutil.copy`. Then
+`gdrive.py` only has to debug rclone-specific issues, not seam-design issues
+plus rclone issues simultaneously. Same "prove the simple thing before stacking
+the next" discipline that carried every prior iteration.
+
+**Locked rationale (rclone over Google Drive API direct).** Drive API direct
+integration requires Google Cloud Console setup, OAuth credentials, refresh
+token handling, and periodic re-auth — significant ongoing maintenance for a
+personal tool. rclone handles all of that with a one-time `rclone config`
+outside the app; the app just shells out to commands. Bonus: changing
+destination later (Dropbox, S3, OneDrive) is a config change in rclone, not
+new code in the app. Trade: one external dependency (rclone) the user must
+install. For a single-user tool this trade is correct; for a product shipped
+to many users it would not be.
+
+**Locked rationale (retire YouTube auto-publish entirely).** Keeping the
+YouTube API integration "just in case" would be cargo code — currently
+unused, requiring maintenance (API client, auth) for hypothetical future use.
+If YouTube direct upload is ever genuinely wanted, it returns as
+`delivery/youtube.py` with the same shape as other deliverers. Removing it
+now is cheap; carrying it forever is not.
+
 **Iteration 3 — SKIPPED by user decision (no LLM budget).**
 
 > User chose not to build auto mode due to ongoing LLM API cost. This is an
@@ -789,6 +998,18 @@ must not compete with proving the core loop.
 | 34 | Step 2.5.1 combines visual uplift + dark mode in one pass | Splitting means porting layout twice; mockups already exist |
 | 35 | Mockup porting is layout-aware, not literal | Mockups predate 2.5 scope; must leave room for new features as ported |
 | 36 | Design mockup `.jsx` files are reference, not code | Have sandbox helpers + mock data; production frontend remains source of truth for logic |
+| 37 | Hook text always generated; uploaded asset is background only | Reverses 2.5.5; uniform code path + presets apply to all variants |
+| 38 | Hook background = blur_self / video / image (3 paths) | One field `hook_background`, behavior by file type |
+| 39 | Hook asset shorter than duration → freeze last frame, not loop | Looping short asset glitches at seam |
+| 40 | Transition library kept to 2-3 options, fixed durations | DIY tools look amateur when offering 20+ transitions |
+| 41 | Watermark hardcoded as config value, not input field | One channel = no flexibility needed yet; trivial to promote later |
+| 42 | Watermark visible from `hook_duration` to end, not during hook | Hook is its own visual segment; watermark belongs to content body |
+| 43 | Hook highlight uses inline `[...]` syntax in hook_text | Inline = no desync risk; literal text always matches |
+| 44 | No cap on highlight count per hook | Single-user tool; review loop self-corrects; cap adds complexity for no payoff |
+| 45 | `publish.py` retired; replaced by `delivery/` swappable seam | Multi-platform reality + manual upload workflow; seam matches other system patterns |
+| 46 | `delivery/local.py` built before `delivery/gdrive.py` | Proves seam contract with simplest impl before adding cloud transport |
+| 47 | Google Drive via rclone shell-out, not Drive API direct | Personal tool: OAuth/refresh maintenance avoided; bonus = portable to other clouds |
+| 48 | YouTube Data API integration removed entirely, not kept "just in case" | Cargo code; if needed later, returns as `delivery/youtube.py` |
 
 ---
 

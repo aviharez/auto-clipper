@@ -1,4 +1,5 @@
 source: https://www.youtube.com/watch?v=g1m7BpZRTvc
+channel_name: "SNZ Clips"
 default_captions: true
 
 hook:
@@ -10,7 +11,7 @@ clips:
   - start: "4:41"
     end: "5:40"
     title: "Kenapa Akting Victoria Secret Bikin Nadin Trauma?"
-    hook_text: "Dari kecil nonton Victoria Secret sampai akhirnya terjun ke dunia seni, tapi kenapa Nadin malah ngerasa akting itu aneh banget?"
+    hook_text: "Suka nonton [Victoria Secret] sampai ke dunia seni, kok Nadin ngerasa akting [aneh banget]?"
 
   - start: "12:05"
     end: "13:04"

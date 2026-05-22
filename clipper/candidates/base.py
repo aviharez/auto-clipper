@@ -17,6 +17,7 @@ class Candidate:
     hook_preset: Optional[str] = None
     rank: Optional[int] = None          # reserved for ranked compilation (§8b)
     origin: Literal["manual", "auto"] = "manual"
+    hook_duration: Optional[float] = None  # per-clip override; None → DEFAULT_HOOK_DURATION
 
     @property
     def duration(self) -> float:
