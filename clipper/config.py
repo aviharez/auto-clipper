@@ -204,7 +204,7 @@ CAPTION_PRESETS = {
     # },
 }
 
-DEFAULT_CAPTION_PRESET = "bold_yellow"
+DEFAULT_CAPTION_PRESET = "warm_yellow"
 
 # Hook presets — control the teaser segment's text style and gradient darkness.
 # gradient_darkness: how much the bottom 90% of the frame is darkened.
@@ -224,7 +224,7 @@ HOOK_PRESETS = {
         "gradient_darkness": 1.00,
         "position": "lower",
         "text_transform": "upper",
-        "margin_h": 2,
+        "margin_h": 20,
         "line_spacing": 0.85,
         "transition": "fade",
     },
@@ -239,7 +239,7 @@ HOOK_PRESETS = {
         "gradient_darkness": 1.00,
         "position": "lower",
         "text_transform": "upper",
-        "margin_h": 2,
+        "margin_h": 10,
         "line_spacing": 0.85,
         "transition": "fade",
     },
@@ -254,7 +254,7 @@ HOOK_PRESETS = {
         "gradient_darkness": 1.00,
         "position": "lower",
         "text_transform": "upper",
-        "margin_h": 2,
+        "margin_h": 10,
         "line_spacing": 0.85,
         "transition": "fade",
     },
@@ -269,7 +269,7 @@ HOOK_PRESETS = {
         "gradient_darkness": 1.00,
         "position": "lower",
         "text_transform": "upper",
-        "margin_h": 2,
+        "margin_h": 10,
         "line_spacing": 0.85,
         "transition": "fade",
     },
@@ -284,7 +284,7 @@ HOOK_PRESETS = {
         "gradient_darkness": 1.00,
         "position": "lower",
         "text_transform": "upper",
-        "margin_h": 2,
+        "margin_h": 10,
         "line_spacing": 0.85,
         "transition": "fade",
     },
@@ -344,7 +344,7 @@ HOOK_PRESETS = {
     #     "gradient_darkness": 1.00,
     #     "position": "lower",
     #     "text_transform": "upper",
-    #     "margin_h": 2,
+    #     "margin_h": 10,
     #     "line_spacing": 0.85,
     #     "transition": "fade",
     # },
@@ -382,7 +382,7 @@ HOOK_PRESETS = {
     # },
 }
 
-DEFAULT_HOOK_PRESET = "blur_dark"
+DEFAULT_HOOK_PRESET = "warm_yellow"
 
 DEFAULT_HOOK_ENABLED = True
 DEFAULT_HOOK_DURATION = 1
