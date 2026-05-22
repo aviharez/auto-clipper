@@ -7,3 +7,4 @@ aiofiles>=23.2.1
 assemblyai>=0.30.0
 numpy>=1.26.0
 mediapipe>=0.10.14
+pillow>=10.0.0

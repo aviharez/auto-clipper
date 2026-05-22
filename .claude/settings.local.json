@@ -70,7 +70,14 @@
       "Bash(where ffprobe *)",
       "Bash(powershell *)",
       "Bash(Remove-Item *)",
-      "Bash(dir *)"
+      "Bash(dir *)",
+      "Bash(ffmpeg -y -hide_banner -loglevel error -f lavfi -i color=c=0x202830:s=1080x1920:d=1 -vf \"ass=_hooktest_tiktok_green.ass:fontsdir=assets/fonts\" -frames:v 1 _hooktest_tiktok_green.png)",
+      "Bash(ffmpeg -y -hide_banner -loglevel error -f lavfi -i color=c=0x202830:s=1080x1920:d=1 -vf \"ass=_hooktest_blur_dark.ass:fontsdir=assets/fonts\" -frames:v 1 _hooktest_blur_dark.png)",
+      "Bash(\"C:/ffmpeg/bin/ffmpeg.exe\" -y -hide_banner -loglevel error -f lavfi -i color=c=0x202830:s=1080x1920:d=1 -vf \"ass=_hooktest_tiktok_green.ass:fontsdir=assets/fonts\" -frames:v 1 _hooktest_tiktok_green.png)",
+      "Bash(\"C:/ffmpeg/bin/ffmpeg.exe\" -y -hide_banner -loglevel error -f lavfi -i color=c=0x202830:s=1080x1920:d=1 -vf \"ass=_hooktest_blur_dark.ass:fontsdir=assets/fonts\" -frames:v 1 _hooktest_blur_dark.png)",
+      "Bash(\"C:/ffmpeg/bin/ffmpeg.exe\" -y -hide_banner -loglevel error -f lavfi -i color=c=0x101418:s=1080x1920:d=1 -vf \"ass=_t_final.ass:fontsdir=assets/fonts\" -frames:v 1 _t_final.png)",
+      "Bash(rm -f _m.ass _m.png)",
+      "Bash(\"C:/ffmpeg/bin/ffmpeg.exe\" -y -hide_banner -loglevel error -f lavfi -i color=c=0x101418:s=1080x1920:d=1 -vf \"ass=_t_fixed.ass:fontsdir=assets/fonts\" -frames:v 1 _t_fixed.png)"
     ]
   }
 }

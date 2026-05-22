@@ -285,6 +285,19 @@ class StyleUpdate(BaseModel):
     hook_preset: Optional[str] = None
 
 
+class HookTextUpdate(BaseModel):
+    hook_text: str
+
+
+@app.put("/api/candidates/{cand_id}/hook-text")
+def api_update_hook_text(cand_id: str, body: HookTextUpdate):
+    candidate = db.get_candidate(cand_id)
+    if not candidate:
+        raise HTTPException(404, "Candidate not found")
+    db.update_candidate(cand_id, hook_text=body.hook_text.strip())
+    return {"ok": True}
+
+
 @app.put("/api/candidates/{cand_id}/style")
 def api_update_style(cand_id: str, body: StyleUpdate):
     candidate = db.get_candidate(cand_id)

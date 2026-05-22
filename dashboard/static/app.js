@@ -620,6 +620,7 @@ async function showJobDetail(jobId) {
   Object.keys(_txHasEdits).forEach(k => delete _txHasEdits[k]);
   Object.keys(_txDirty).forEach(k => delete _txDirty[k]);
   Object.keys(_txFetching).forEach(k => delete _txFetching[k]);
+  Object.keys(_hookTextEdits).forEach(k => delete _hookTextEdits[k]);
   setSidebarNav('jobs');
 
   app.innerHTML = `
@@ -786,6 +787,22 @@ async function renderJobDetail(jobId) {
       }
     }
 
+    // Initialize hook text editing state and attach textarea handler
+    if (activeClip && activeClip.hook_enabled) {
+      const cid = activeClip.id;
+      if (!_hookTextEdits[cid]) {
+        _hookTextEdits[cid] = {
+          original: activeClip.hook_text || '',
+          current:  activeClip.hook_text || '',
+        };
+      }
+      const ta = document.getElementById(`hook-text-${cid}`);
+      if (ta) {
+        ta.oninput = () => checkHookTextDirty(cid);
+        checkHookTextDirty(cid);
+      }
+    }
+
   } catch (e) {
     app.innerHTML = `<div class="empty">Error: ${e.message}</div>`;
   }
@@ -902,10 +919,19 @@ function renderClipControlsHtml(c) {
       </div>
     </div>` : '';
 
-  const isExternal = c.hook_background === 'external';
+  const isExternal   = c.hook_background === 'external';
+  const hookTextVal  = _hookTextEdits[c.id]?.current ?? (c.hook_text || '');
   const hookHtml = c.hook_enabled ? `
     <div class="ctrl-section" style="border-top:1px solid var(--border)">
-      <span class="ctrl-section-title">Hook source</span>
+      <span class="ctrl-section-title">Hook</span>
+      <div style="margin-bottom:10px">
+        <label class="preset-label" style="margin-bottom:4px;display:block">Text</label>
+        <input id="hook-text-${c.id}" class="form-input" type="text"
+               value="${escAttr(hookTextVal)}"
+               placeholder="Use [word] for highlights…" style="width:100%;box-sizing:border-box" />
+        <div id="hook-text-actions-${c.id}" style="margin-top:4px;display:flex;justify-content:flex-end"></div>
+      </div>
+      <label class="preset-label" style="margin-bottom:4px;display:block">Source</label>
       <div class="hook-source-toggle" style="margin-bottom:8px">
         <button class="hook-src-btn${!isExternal ? ' active' : ''}" data-hook-src="blur_self" data-cid="${c.id}">Generated (blur)</button>
         <button class="hook-src-btn${isExternal ? ' active' : ''}" data-hook-src="external" data-cid="${c.id}">Upload file</button>
@@ -1049,11 +1075,45 @@ async function removeHookVideo(cid) {
   }
 }
 
+// ── Hook text editing ─────────────────────────────────────────────────────
+
+function checkHookTextDirty(cid) {
+  const edit = _hookTextEdits[cid];
+  if (!edit) return;
+  const ta = document.getElementById(`hook-text-${cid}`);
+  if (ta) edit.current = ta.value;
+  const isDirty = edit.current !== edit.original;
+  const actionsEl = document.getElementById(`hook-text-actions-${cid}`);
+  if (actionsEl) {
+    actionsEl.innerHTML = isDirty
+      ? `<button class="btn btn-ghost btn-sm" onclick="saveHookText('${cid}')">Save</button>`
+      : '';
+  }
+}
+
+async function saveHookText(cid) {
+  const edit = _hookTextEdits[cid];
+  if (!edit) return;
+  const ta   = document.getElementById(`hook-text-${cid}`);
+  const text = (ta ? ta.value : edit.current).trim();
+  try {
+    await api('PUT', `/candidates/${cid}/hook-text`, { hook_text: text });
+    edit.original     = text;
+    edit.current      = text;
+    _presetDirty[cid] = true;
+    checkHookTextDirty(cid);
+    toast('Hook text saved — click Regenerate to apply');
+  } catch (e) {
+    toast('Error: ' + e.message, 'error');
+  }
+}
+
 // ── Nudge state ────────────────────────────────────────────────────────────
 
-const _nudge       = {};  // cid -> { start, end }
-const _bsugg       = {};  // cid -> suggestion object | null
-const _presetDirty = {};  // cid -> true when preset changed but not regenerated
+const _nudge        = {};  // cid -> { start, end }
+const _bsugg        = {};  // cid -> suggestion object | null
+const _presetDirty  = {};  // cid -> true when preset changed but not regenerated
+const _hookTextEdits = {}; // cid -> { original: str, current: str }
 
 // ── Transcript editor state ────────────────────────────────────────────────
 

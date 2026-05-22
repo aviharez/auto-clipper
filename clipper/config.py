@@ -18,11 +18,11 @@ YOUTUBE_LOGO_PATH = LOGOS_DIR / "youtube.png"
 YOUTUBE_LOGO_ASPECT = 180 / 127  # width / height
 
 # Branding overlay — logo + channel name in top-left corner of every clip.
-BRANDING_LOGO_HEIGHT_FRAC = 0.019   # logo height as fraction of CLIP_HEIGHT (~65px at 1920)
+BRANDING_LOGO_HEIGHT_FRAC = 0.015   # logo height as fraction of CLIP_HEIGHT (~65px at 1920)
 BRANDING_MARGIN_PX = 42             # pixels from top-left edge
 BRANDING_FONT_FILE = str(FONTS_DIR / "Montserrat-Bold.ttf")
 BRANDING_FONT_FAMILY = "Montserrat"
-BRANDING_FONT_SIZE_FRAC = 0.019     # channel name font size as fraction of CLIP_HEIGHT (~36px)
+BRANDING_FONT_SIZE_FRAC = 0.015     # channel name font size as fraction of CLIP_HEIGHT (~36px)
 
 # Delivery (§2.7).
 # User-configurable via environment variables or by editing the values below.
@@ -205,7 +205,8 @@ HOOK_PRESETS = {
         "gradient_darkness": 1.00,
         "position": "lower",
         "text_transform": "upper",
-        "margin_h": 52,
+        "margin_h": 2,
+        "line_spacing": 0.85,
         "transition": "fade",
     },
     "tiktok_yellow": {
@@ -245,7 +246,7 @@ HOOK_PRESETS = {
 DEFAULT_HOOK_PRESET = "blur_dark"
 
 DEFAULT_HOOK_ENABLED = True
-DEFAULT_HOOK_DURATION = 3
+DEFAULT_HOOK_DURATION = 1
 DEFAULT_HOOK_BACKGROUND = "blur_self"
 
 # Transcription
@@ -285,7 +286,7 @@ REFRAME_SUBJECT_MIN_COVERAGE = 0.55  # a cluster present in >= this frac of a sh
 # Small bottom-center text on every clip, starting after the hook segment.
 # Single-channel tool: text lives here. Promote to a batch input if multi-channel
 # support is ever needed.
-WATERMARK_TEXT = "Daily Clip"
+WATERMARK_TEXT = "Seporsi Obrolan"
 WATERMARK_FONT_FILE = str(FONTS_DIR / "Montserrat-Bold.ttf")
 WATERMARK_FONT_SIZE_FRAC = 0.020    # ~30 px at 1920 height — unobtrusive
 WATERMARK_COLOR = "#888888"         # dark-gray, subtle against any background
