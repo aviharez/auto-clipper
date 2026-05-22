@@ -436,7 +436,7 @@ def _build_hook_ass(hook_text: str, duration: float, preset: dict) -> str:
 
 # Fixed durations per transition type (locked — not user-tunable per §2.6.3).
 _TRANSITION_SPECS: dict[str, dict] = {
-    "fade":     {"effect": "fade",    "duration": 0.25},
+    "fade":     {"effect": "fade",    "duration": 0.125},
     "slide_up": {"effect": "slideup", "duration": 0.30},
 }
 
@@ -450,9 +450,15 @@ def _concatenate(
 ):
     """Concatenate hook.mp4 + main_clip into hooked.mp4.
 
-    transition: "cut" (hard join, default), "fade" (0.25s cross-fade),
-                or "slide_up" (hook exits top while main enters from bottom, 0.3s).
+    transition: "cut" (hard join), "fade" (hook fades to black → main fades in),
+                or "slide_up" (hook slides off top while main enters from bottom).
     Durations are fixed per type and not exposed as parameters.
+
+    "fade" uses individual fade+concat rather than xfade cross-dissolve.
+    xfade cross-dissolve is invisible when hook and main clip share the same
+    opening frames (hook is a darkened version of the clip start). The individual
+    approach — hook fades to black, then main clip fades in from black — produces
+    an unambiguous visible dip regardless of content similarity.
     """
     spec = _TRANSITION_SPECS.get(transition)
 
@@ -478,14 +484,29 @@ def _concatenate(
     else:
         effect = spec["effect"]
         t_dur = spec["duration"]
-        # xfade offset = when the transition begins in the first stream's timeline.
         offset = max(0.0, hook_duration - t_dur)
-        filter_complex = (
-            f"[0:v]setsar=1[hv];"
-            f"[1:v]setsar=1[mv];"
-            f"[hv][mv]xfade=transition={effect}:duration={t_dur:.3f}:offset={offset:.3f}[v];"
-            f"[0:a][1:a]acrossfade=d={t_dur:.3f}[a]"
-        )
+
+        if effect == "fade":
+            # Individual fade: hook fades to black over last t_dur seconds,
+            # main clip fades in from black over first t_dur seconds, hard concat.
+            # Output duration = hook_duration + main_clip_duration (no frame overlap).
+            filter_complex = (
+                f"[0:v]setsar=1,fade=t=out:st={offset:.3f}:d={t_dur:.3f}[hv];"
+                f"[1:v]setsar=1,fade=t=in:st=0:d={t_dur:.3f}[mv];"
+                f"[hv][mv]concat=n=2:v=1:a=0[v];"
+                f"[0:a]afade=t=out:st={offset:.3f}:d={t_dur:.3f}[ha];"
+                f"[1:a]afade=t=in:st=0:d={t_dur:.3f}[ma];"
+                f"[ha][ma]concat=n=2:v=0:a=1[a]"
+            )
+        else:
+            # xfade for slide_up (hook exits top, main enters from bottom).
+            filter_complex = (
+                f"[0:v]setsar=1[hv];"
+                f"[1:v]setsar=1[mv];"
+                f"[hv][mv]xfade=transition={effect}:duration={t_dur:.3f}:offset={offset:.3f}[v];"
+                f"[0:a][1:a]acrossfade=d={t_dur:.3f}[a]"
+            )
+
         cmd = [
             "ffmpeg", "-y",
             "-i", hook,
@@ -502,3 +523,5 @@ def _concatenate(
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"ffmpeg concat (transition={transition!r}) failed:\n{result.stderr}")
+    if result.stderr:
+        log.debug("ffmpeg concat stderr:\n%s", result.stderr)
