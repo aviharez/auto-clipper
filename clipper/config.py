@@ -193,14 +193,16 @@ HOOK_PRESETS = {
     # position="lower" anchors text ~20% from bottom (above UI chrome).
     # Zero brackets is valid — plain styled text, no highlight applied.
     "tiktok_green": {
-        "font_family": "Anton",
-        "font_file": str(FONTS_DIR / "Anton-Regular.ttf"),
-        "font_size_pct": 8,
+        # "font_family": "Anton",
+        # "font_file": str(FONTS_DIR / "Anton-Regular.ttf"),
+        "font_file": str(FONTS_DIR / "Montserrat-Black.ttf"),
+        "font_family": "Montserrat Black",
+        "font_size_pct": 5,
         "text_color": "#FFFFFF",
         "highlight_color": "#00FF7F",
-        "outline_width": 7,
+        "outline_width": 6,
         "shadow": False,
-        "gradient_darkness": 0.80,
+        "gradient_darkness": 1.00,
         "position": "lower",
         "text_transform": "upper",
         "margin_h": 52,
