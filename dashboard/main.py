@@ -106,7 +106,7 @@ class JobFormBody(BaseModel):
     channel_name: Optional[str] = None
     default_captions: bool = True
     hook_enabled: bool = True
-    hook_duration: int = 3
+    hook_duration: float = 3
     default_caption_preset: Optional[str] = None
     default_hook_preset: Optional[str] = None
     clips: list[ClipFormItem]

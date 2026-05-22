@@ -142,7 +142,6 @@ async function showJobList() {
 // ── New Job Modal ──────────────────────────────────────────────────────────
 
 let _newJobModalEl = null;
-let _newJobKeyHandler = null;
 
 function openNewJobModal() {
   if (_newJobModalEl) return;
@@ -234,11 +233,6 @@ function openNewJobModal() {
   document.body.appendChild(el);
   _newJobModalEl = el;
 
-  el.addEventListener('click', (e) => { if (e.target === el) closeNewJobModal(); });
-
-  _newJobKeyHandler = (e) => { if (e.key === 'Escape') closeNewJobModal(); };
-  document.addEventListener('keydown', _newJobKeyHandler);
-
   document.getElementById('modal-close-btn').onclick = closeNewJobModal;
 
   setupNewJobPanel();
@@ -246,7 +240,6 @@ function openNewJobModal() {
 
 function closeNewJobModal() {
   if (_newJobModalEl) { _newJobModalEl.remove(); _newJobModalEl = null; }
-  if (_newJobKeyHandler) { document.removeEventListener('keydown', _newJobKeyHandler); _newJobKeyHandler = null; }
 }
 
 function setupUpload() {
