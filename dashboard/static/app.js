@@ -660,8 +660,8 @@ async function showJobDetail(jobId) {
   await renderJobDetail(jobId);
 }
 
-async function renderJobDetail(jobId) {
-  if ($$('video').some(v => v.currentTime > 0 && !v.ended)) {
+async function renderJobDetail(jobId, { force = false } = {}) {
+  if (!force && $$('video').some(v => v.currentTime > 0 && !v.ended)) {
     _scheduleDetailPoll(jobId);
     return;
   }
@@ -748,8 +748,9 @@ async function renderJobDetail(jobId) {
 
     $$('.clip-list-item').forEach(el => {
       el.onclick = () => {
+        $$('video').forEach(v => v.pause());
         _activeClipId = el.dataset.cid;
-        renderJobDetail(_currentJobId);
+        renderJobDetail(_currentJobId, { force: true });
       };
     });
 

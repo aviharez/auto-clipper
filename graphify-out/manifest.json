@@ -1,0 +1,192 @@
+{
+  "C:\\Users\\syifa\\Documents\\Work\\Playground\\clip-automation\\clipper\\config.py": {
+    "mtime": 1779482182.12602,
+    "ast_hash": "cfd851125ef7f0e3cdd765c311db0f34",
+    "semantic_hash": "cfd851125ef7f0e3cdd765c311db0f34"
+  },
+  "C:\\Users\\syifa\\Documents\\Work\\Playground\\clip-automation\\clipper\\jobs.py": {
+    "mtime": 1779469790.2895916,
+    "ast_hash": "fe82d03733ba84d27e472755e755cc46",
+    "semantic_hash": "fe82d03733ba84d27e472755e755cc46"
+  },
+  "C:\\Users\\syifa\\Documents\\Work\\Playground\\clip-automation\\clipper\\runner.py": {
+    "mtime": 1779472638.492241,
+    "ast_hash": "95deef52dfacbf157f242f066cc6c4dc",
+    "semantic_hash": "95deef52dfacbf157f242f066cc6c4dc"
+  },
+  "C:\\Users\\syifa\\Documents\\Work\\Playground\\clip-automation\\clipper\\__init__.py": {
+    "mtime": 1779110446.7846029,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "C:\\Users\\syifa\\Documents\\Work\\Playground\\clip-automation\\clipper\\assembly\\base.py": {
+    "mtime": 1779110508.2636695,
+    "ast_hash": "feb2a5464200e3cebb0ed077eafb436c",
+    "semantic_hash": "feb2a5464200e3cebb0ed077eafb436c"
+  },
+  "C:\\Users\\syifa\\Documents\\Work\\Playground\\clip-automation\\clipper\\assembly\\individual.py": {
+    "mtime": 1779450328.2690766,
+    "ast_hash": "d985d0d63540b37097c96fa81d2bd283",
+    "semantic_hash": "d985d0d63540b37097c96fa81d2bd283"
+  },
+  "C:\\Users\\syifa\\Documents\\Work\\Playground\\clip-automation\\clipper\\assembly\\__init__.py": {
+    "mtime": 1779110447.2768247,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "C:\\Users\\syifa\\Documents\\Work\\Playground\\clip-automation\\clipper\\candidates\\base.py": {
+    "mtime": 1779469768.727798,
+    "ast_hash": "593ff69131395f096412a4bdee5e9fd3",
+    "semantic_hash": "593ff69131395f096412a4bdee5e9fd3"
+  },
+  "C:\\Users\\syifa\\Documents\\Work\\Playground\\clip-automation\\clipper\\candidates\\manual.py": {
+    "mtime": 1779469779.208748,
+    "ast_hash": "983fe87296fa36a9fd4682781408fe26",
+    "semantic_hash": "983fe87296fa36a9fd4682781408fe26"
+  },
+  "C:\\Users\\syifa\\Documents\\Work\\Playground\\clip-automation\\clipper\\candidates\\__init__.py": {
+    "mtime": 1779110446.9652922,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "C:\\Users\\syifa\\Documents\\Work\\Playground\\clip-automation\\clipper\\delivery\\base.py": {
+    "mtime": 1779450328.27218,
+    "ast_hash": "f5396c62b12572b12d2074d8fcb10f6e",
+    "semantic_hash": "f5396c62b12572b12d2074d8fcb10f6e"
+  },
+  "C:\\Users\\syifa\\Documents\\Work\\Playground\\clip-automation\\clipper\\delivery\\gdrive.py": {
+    "mtime": 1779450328.27218,
+    "ast_hash": "010084690c06aa6e316048d027d3a7ca",
+    "semantic_hash": "010084690c06aa6e316048d027d3a7ca"
+  },
+  "C:\\Users\\syifa\\Documents\\Work\\Playground\\clip-automation\\clipper\\delivery\\local.py": {
+    "mtime": 1779480776.6458683,
+    "ast_hash": "c99f267ee86fa9c4152102178b7ec949",
+    "semantic_hash": "c99f267ee86fa9c4152102178b7ec949"
+  },
+  "C:\\Users\\syifa\\Documents\\Work\\Playground\\clip-automation\\clipper\\delivery\\__init__.py": {
+    "mtime": 1779450328.2710726,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "C:\\Users\\syifa\\Documents\\Work\\Playground\\clip-automation\\clipper\\stages\\boundary.py": {
+    "mtime": 1779284380.0081174,
+    "ast_hash": "f509c043207a7f199eaef9f9e164938c",
+    "semantic_hash": "f509c043207a7f199eaef9f9e164938c"
+  },
+  "C:\\Users\\syifa\\Documents\\Work\\Playground\\clip-automation\\clipper\\stages\\branding.py": {
+    "mtime": 1779450328.2751837,
+    "ast_hash": "6005c60c4fb446efa5b0cbd6aa0b8c49",
+    "semantic_hash": "6005c60c4fb446efa5b0cbd6aa0b8c49"
+  },
+  "C:\\Users\\syifa\\Documents\\Work\\Playground\\clip-automation\\clipper\\stages\\caption.py": {
+    "mtime": 1779450328.2751837,
+    "ast_hash": "bbfea268e20a0a1b71ea1b4153e5a589",
+    "semantic_hash": "bbfea268e20a0a1b71ea1b4153e5a589"
+  },
+  "C:\\Users\\syifa\\Documents\\Work\\Playground\\clip-automation\\clipper\\stages\\cut.py": {
+    "mtime": 1779215299.7399313,
+    "ast_hash": "ea5772bf304f2e8c2219d0740809739d",
+    "semantic_hash": "ea5772bf304f2e8c2219d0740809739d"
+  },
+  "C:\\Users\\syifa\\Documents\\Work\\Playground\\clip-automation\\clipper\\stages\\hook.py": {
+    "mtime": 1779469820.5388577,
+    "ast_hash": "7ad97911b1f0dd8d49782bc57bbecc61",
+    "semantic_hash": "7ad97911b1f0dd8d49782bc57bbecc61"
+  },
+  "C:\\Users\\syifa\\Documents\\Work\\Playground\\clip-automation\\clipper\\stages\\ingest.py": {
+    "mtime": 1779450328.276687,
+    "ast_hash": "16c8303f740225d0af38be1d9d9cf873",
+    "semantic_hash": "16c8303f740225d0af38be1d9d9cf873"
+  },
+  "C:\\Users\\syifa\\Documents\\Work\\Playground\\clip-automation\\clipper\\stages\\reframe.py": {
+    "mtime": 1779213550.2971876,
+    "ast_hash": "aeb1b48133d48f8a7e6fdf249ec38f00",
+    "semantic_hash": "aeb1b48133d48f8a7e6fdf249ec38f00"
+  },
+  "C:\\Users\\syifa\\Documents\\Work\\Playground\\clip-automation\\clipper\\stages\\watermark.py": {
+    "mtime": 1779450328.277691,
+    "ast_hash": "e576f6ff74651e147874eec57cb7ed50",
+    "semantic_hash": "e576f6ff74651e147874eec57cb7ed50"
+  },
+  "C:\\Users\\syifa\\Documents\\Work\\Playground\\clip-automation\\clipper\\stages\\__init__.py": {
+    "mtime": 1779110447.1265168,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "C:\\Users\\syifa\\Documents\\Work\\Playground\\clip-automation\\clipper\\transcribe\\api.py": {
+    "mtime": 1779118525.344803,
+    "ast_hash": "d8ad7a739844e3744799bec1426e8570",
+    "semantic_hash": "d8ad7a739844e3744799bec1426e8570"
+  },
+  "C:\\Users\\syifa\\Documents\\Work\\Playground\\clip-automation\\clipper\\transcribe\\base.py": {
+    "mtime": 1779110648.6487646,
+    "ast_hash": "588873924a4bca2aff639a48d7f8b171",
+    "semantic_hash": "588873924a4bca2aff639a48d7f8b171"
+  },
+  "C:\\Users\\syifa\\Documents\\Work\\Playground\\clip-automation\\clipper\\transcribe\\__init__.py": {
+    "mtime": 1779110447.4160752,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "C:\\Users\\syifa\\Documents\\Work\\Playground\\clip-automation\\dashboard\\main.py": {
+    "mtime": 1779469836.6240253,
+    "ast_hash": "15206a06697b181ab0d10ff8a44f0ada",
+    "semantic_hash": "15206a06697b181ab0d10ff8a44f0ada"
+  },
+  "C:\\Users\\syifa\\Documents\\Work\\Playground\\clip-automation\\dashboard\\__init__.py": {
+    "mtime": 1779110447.5806417,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "C:\\Users\\syifa\\Documents\\Work\\Playground\\clip-automation\\dashboard\\static\\app.js": {
+    "mtime": 1779476634.4940324,
+    "ast_hash": "94b9e6afb246edb724440c97cc6dc3bb",
+    "semantic_hash": "94b9e6afb246edb724440c97cc6dc3bb"
+  },
+  "C:\\Users\\syifa\\Documents\\Work\\Playground\\clip-automation\\CLAUDE.md": {
+    "mtime": 1779450328.2608116,
+    "ast_hash": "ed20e845c3407743f39f52a6f674c877",
+    "semantic_hash": "ed20e845c3407743f39f52a6f674c877"
+  },
+  "C:\\Users\\syifa\\Documents\\Work\\Playground\\clip-automation\\CLIP_AUTOMATION_PLAN.md": {
+    "mtime": 1779450328.2618988,
+    "ast_hash": "1ea4cf1da0ddabcc9b61029ece601202",
+    "semantic_hash": "1ea4cf1da0ddabcc9b61029ece601202"
+  },
+  "C:\\Users\\syifa\\Documents\\Work\\Playground\\clip-automation\\example_clips copy.yaml": {
+    "mtime": 1779473720.4070742,
+    "ast_hash": "4a7e9b2818a1bee7ebcab5f332cdce9f",
+    "semantic_hash": "4a7e9b2818a1bee7ebcab5f332cdce9f"
+  },
+  "C:\\Users\\syifa\\Documents\\Work\\Playground\\clip-automation\\example_clips.yaml": {
+    "mtime": 1779484789.9941747,
+    "ast_hash": "10bad09e14ae1464cbdd3dde6c05c97d",
+    "semantic_hash": "10bad09e14ae1464cbdd3dde6c05c97d"
+  },
+  "C:\\Users\\syifa\\Documents\\Work\\Playground\\clip-automation\\README.md": {
+    "mtime": 1779450328.2628973,
+    "ast_hash": "888f9d8f4031e54aaf798b8ab9629ce7",
+    "semantic_hash": "888f9d8f4031e54aaf798b8ab9629ce7"
+  },
+  "C:\\Users\\syifa\\Documents\\Work\\Playground\\clip-automation\\reframe_cmds.txt": {
+    "mtime": 1779173402.0322125,
+    "ast_hash": "63de15cefaa0676a371a008a467c3825",
+    "semantic_hash": "63de15cefaa0676a371a008a467c3825"
+  },
+  "C:\\Users\\syifa\\Documents\\Work\\Playground\\clip-automation\\requirements.txt": {
+    "mtime": 1779450328.282782,
+    "ast_hash": "f4d3cdeb997663fc878a7d1d6d77b1db",
+    "semantic_hash": "f4d3cdeb997663fc878a7d1d6d77b1db"
+  },
+  "C:\\Users\\syifa\\Documents\\Work\\Playground\\clip-automation\\dashboard\\static\\index.html": {
+    "mtime": 1779450328.279779,
+    "ast_hash": "39cc5f8f3894a7a3f0b31fc246fade60",
+    "semantic_hash": "39cc5f8f3894a7a3f0b31fc246fade60"
+  },
+  "C:\\Users\\syifa\\Documents\\Work\\Playground\\clip-automation\\assets\\logos\\youtube.png": {
+    "mtime": 1779450328.2680717,
+    "ast_hash": "8b5ff09c574e451e7a73f12076a97074",
+    "semantic_hash": "8b5ff09c574e451e7a73f12076a97074"
+  }
+}
