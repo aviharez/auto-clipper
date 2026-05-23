@@ -70,7 +70,7 @@ def serve_video(cand_id: str):
     path = Path(candidate["output_path"])
     if not path.exists():
         raise HTTPException(404, "Video file not found on disk")
-    return FileResponse(str(path), media_type="video/mp4")
+    return FileResponse(str(path), media_type="video/mp4", headers={"Cache-Control": "no-cache"})
 
 
 # ── API: Jobs ─────────────────────────────────────────────────────────────────

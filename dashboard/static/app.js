@@ -873,7 +873,7 @@ function renderClipCenterHtml(c, idx, total) {
     </div>
     <div class="clip-center-video">
       ${hasVideo
-        ? `<video controls src="/video/${c.id}" preload="metadata"></video>
+        ? `<video controls src="/video/${c.id}?v=${encodeURIComponent((c.output_path||'').replace(/\\/g,'/').split('/').pop())}" preload="metadata"></video>
            <div class="clip-video-overlay-stub"></div>`
         : `<div class="clip-video-placeholder">${statusMsg(c)}</div>`
       }

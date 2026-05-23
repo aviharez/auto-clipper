@@ -194,8 +194,11 @@ def _analyze_frames(frames: list[Path], scale_back: float,
                 # cannot drag the camera or wrongly trigger a split.
                 if score < REFRAME_MIN_CONFIDENCE or height < min_face_h:
                     continue
+                top_y = bb.origin_y * scale_back
+                bottom_y = (bb.origin_y + bb.height) * scale_back
                 faces.append({
                     "cx": (left + right) / 2, "left": left, "right": right,
+                    "cy": (top_y + bottom_y) / 2,
                     "w": right - left, "score": score,
                 })
             per_frame.append(faces)
@@ -338,19 +341,21 @@ def _cluster_cx(detections: list[tuple[int, dict]], gap: float) -> list[list[tup
 
 
 def _shot_split(subjects: list[list[tuple[int, dict]]], src_w: int, src_h: int,
-                pad: float) -> tuple[str, str, str] | None:
+                cw: int, pad: float) -> tuple[str, str, str] | None:
     """
     Two+ subjects too far apart for one 9:16 window -> stacked top/bottom.
-    Each half is a static 9:8 region of the source (full height) framed on its
-    subject group, scaled to 1080x960, vstacked. Static by design: Tier 2a does
-    not track speakers, and a fixed split cannot flicker. Returns None if the
-    source is too narrow to split (caller falls back to a single window).
+    Each half uses the same crop width as the single view (cw) so the zoom
+    matches. The crop height is derived to fill the 9:8 output half without
+    distortion, and is centered on each subject's face y-position. Static by
+    design: Tier 2a does not track speakers, and a fixed split cannot flicker.
+    Returns None if the source is too small to split.
     """
-    scw = _even(src_h * CLIP_WIDTH / HALF_H)        # 9:8 region (1080:960)
-    if scw > src_w:
+    scw = cw                                         # same horizontal zoom as single
+    sch = _even(scw * HALF_H / CLIP_WIDTH)           # height for 9:8 output half
+    if scw > src_w or sch > src_h:
         return None
-    sch = int(src_h)
     x_max = float(src_w - scw)
+    y_max = float(src_h - sch)
 
     # Group subjects into two halves at the widest gap between their centroids.
     cents = sorted(
@@ -367,15 +372,22 @@ def _shot_split(subjects: list[list[tuple[int, dict]]], src_w: int, src_h: int,
         hi = max(f["right"] for f in faces) + pad
         return _even(_clamp((lo + hi) / 2 - scw / 2, 0.0, x_max))
 
+    def region_y(groups: list[list[tuple[int, dict]]]) -> int:
+        faces = [f for cl in groups for _, f in cl]
+        cys = [f["cy"] for f in faces if "cy" in f]
+        avg_cy = float(np.mean(cys)) if cys else src_h / 2
+        return _even(_clamp(avg_cy - sch / 2, 0.0, y_max))
+
     tx, bx = region_x(left_groups), region_x(right_groups)   # leftmost on top
+    ty, by = region_y(left_groups), region_y(right_groups)
 
     # Explicit split + setsar=1 on each half: vstack refuses mismatched SAR,
     # which is the classic reason a hand-built split-screen graph fails.
     half_tail = f"scale={CLIP_WIDTH}:{HALF_H}:flags=lanczos,setsar=1"
     filter_complex = (
         f"[0:v]{_HEAD},split=2[s0][s1];"
-        f"[s0]crop={scw}:{sch}:{tx}:0,{half_tail}[top];"
-        f"[s1]crop={scw}:{sch}:{bx}:0,{half_tail}[bot];"
+        f"[s0]crop={scw}:{sch}:{tx}:{ty},{half_tail}[top];"
+        f"[s1]crop={scw}:{sch}:{bx}:{by},{half_tail}[bot];"
         f"[top][bot]vstack=inputs=2[v]"
     )
     desc = (f"split-screen — {len(left_groups)}+{len(right_groups)} subjects "
@@ -470,7 +482,7 @@ def _plan_shot(sub: list[list[dict]], geom: tuple, fps: float,
     env_lo = min(f["left"] for f in every) - pad
     env_hi = max(f["right"] for f in every) + pad
     if len(subjects) >= 2 and (env_hi - env_lo) > cw:
-        split = _shot_split(subjects, src_w, src_h, pad)
+        split = _shot_split(subjects, src_w, src_h, cw, pad)
         if split is not None:
             return split
         # source too narrow to split -> fall through to a single window

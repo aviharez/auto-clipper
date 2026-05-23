@@ -200,6 +200,7 @@ def _restyle(job: dict, cand_id: str, stage: str):
 
 def schedule_restyle(job_id: str, cand_id: str, stage: str):
     """Re-run caption or hook stage for one candidate after a preset change."""
+    db.update_candidate(cand_id, status="captioning", error=None)
     job = db.get_job(job_id)
     _recut_executor.submit(_restyle, job, cand_id, stage)
 
