@@ -431,19 +431,6 @@ def api_update_transcript(cand_id: str, body: TranscriptUpdate):
     return {"ok": True, "word_count": len(merged)}
 
 
-@app.post("/api/candidates/{cand_id}/recaption")
-def api_recaption(cand_id: str):
-    candidate = db.get_candidate(cand_id)
-    if not candidate:
-        raise HTTPException(404, "Candidate not found")
-    if candidate["status"] != "ready":
-        raise HTTPException(400, f"Clip is not ready (status: {candidate['status']})")
-    clip_dir = JOBS_DIR / candidate["job_id"] / "clips" / cand_id
-    if not (clip_dir / "words_edited.json").exists():
-        raise HTTPException(400, "No transcript edits saved — save edits first")
-    runner.schedule_restyle(candidate["job_id"], cand_id, "caption")
-    return {"status": "recaption_queued"}
-
 
 @app.post("/api/candidates/{cand_id}/restyle")
 def api_restyle(cand_id: str):

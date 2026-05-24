@@ -1196,7 +1196,7 @@ function mmssToSecs(s) {
 async function triggerRecut(cid, jobId) {
   const bounds    = _nudge[cid];
   const hasBounds = !!bounds;
-  const hasPreset = !!_presetDirty[cid];
+  const hasPreset = !!_presetDirty[cid] || !!_txHasEdits[cid];
 
   try {
     if (hasBounds) {
@@ -1433,8 +1433,6 @@ function updateTxActions(cid) {
   }
   if (_txDirty[cid]) {
     html += `<button class="btn btn-ghost btn-sm" onclick="saveTxEdits('${cid}')">Save edits</button>`;
-  } else if (_txHasEdits[cid]) {
-    html += `<button class="btn btn-primary btn-sm" onclick="triggerRecaption('${cid}')">Re-caption</button>`;
   }
   el.innerHTML = html;
 }
@@ -1454,16 +1452,6 @@ async function saveTxEdits(cid) {
     toast('Transcript saved', 'success');
   } catch (e) {
     toast('Save failed: ' + e.message, 'error');
-  }
-}
-
-async function triggerRecaption(cid) {
-  try {
-    await api('POST', `/candidates/${cid}/recaption`);
-    _restartDetailPoll();
-    toast('Re-captioning queued…');
-  } catch (e) {
-    toast('Error: ' + e.message, 'error');
   }
 }
 
