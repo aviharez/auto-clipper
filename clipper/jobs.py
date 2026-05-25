@@ -81,6 +81,73 @@ def init_db():
                 youtube_url     TEXT,
                 FOREIGN KEY (job_id) REFERENCES jobs(id)
             );
+
+            CREATE TABLE IF NOT EXISTS compositions (
+                id                        TEXT PRIMARY KEY,
+                title                     TEXT NOT NULL DEFAULT 'Untitled draft',
+                niche                     TEXT,
+                target_sec                REAL NOT NULL DEFAULT 38,
+                hook_text                 TEXT,
+                hook_animation            TEXT,
+                voiceover_source          TEXT,
+                voiceover_kokoro_voice    TEXT,
+                voiceover_kokoro_text     TEXT,
+                captions_mode             TEXT NOT NULL DEFAULT 'script',
+                captions_text             TEXT,
+                caption_preset            TEXT,
+                bed_music_file            TEXT,
+                bed_music_gain_db         REAL DEFAULT -14,
+                bed_music_duck            INTEGER NOT NULL DEFAULT 1,
+                watermark_text            TEXT,
+                status                    TEXT NOT NULL DEFAULT 'draft',
+                error                     TEXT,
+                last_render_path          TEXT,
+                last_render_duration      REAL,
+                final_path                TEXT,
+                delivery_status           TEXT,
+                delivery_url              TEXT,
+                created_at                TEXT NOT NULL,
+                updated_at                TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS composition_segments (
+                id                       TEXT PRIMARY KEY,
+                composition_id           TEXT NOT NULL,
+                idx                      INTEGER NOT NULL,
+                kind                     TEXT NOT NULL,
+                source_url               TEXT,
+                source_file              TEXT,
+                label                    TEXT,
+                trim_in                  REAL,
+                trim_out                 REAL,
+                duration                 REAL,
+                motion                   TEXT,
+                transition_to_next       TEXT NOT NULL DEFAULT 'cut',
+                transition_dur_ms        INTEGER,
+                transition_sfx_file      TEXT,
+                status                   TEXT NOT NULL DEFAULT 'pending',
+                error                    TEXT,
+                FOREIGN KEY (composition_id) REFERENCES compositions(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS composition_voice_ranges (
+                id                       TEXT PRIMARY KEY,
+                composition_id           TEXT NOT NULL,
+                segment_idx              INTEGER NOT NULL,
+                start_sec                REAL NOT NULL,
+                end_sec                  REAL NOT NULL,
+                snippet                  TEXT,
+                FOREIGN KEY (composition_id) REFERENCES compositions(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS composition_sfx (
+                id                       TEXT PRIMARY KEY,
+                composition_id           TEXT NOT NULL,
+                at_sec                   REAL NOT NULL,
+                file                     TEXT NOT NULL,
+                gain_db                  REAL DEFAULT -6,
+                FOREIGN KEY (composition_id) REFERENCES compositions(id)
+            );
         """)
         _migrate(conn)
 

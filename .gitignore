@@ -38,3 +38,5 @@ build/
 
 # macOS
 .DS_Store
+
+kokoro-model/

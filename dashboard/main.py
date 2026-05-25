@@ -544,3 +544,227 @@ def api_deliver(job_id: str, body: DeliverBody = DeliverBody()):
     all_delivered = all("error" not in r for r in results)
     db.update_job(job_id, status="done" if all_delivered else "ready_for_review")
     return {"results": results}
+
+
+# ── API: Compose ──────────────────────────────────────────────────────────────
+
+import clipper.compose.db as compose_db
+
+
+class ComposeCreateBody(BaseModel):
+    title: Optional[str] = None
+
+
+@app.get("/api/compositions")
+def api_list_compositions():
+    return compose_db.list_compositions()
+
+
+@app.post("/api/compositions")
+def api_create_composition(body: ComposeCreateBody = ComposeCreateBody()):
+    comp_id = compose_db.create_composition(body.title or "Untitled draft")
+    return {"id": comp_id}
+
+
+@app.get("/api/compositions/{comp_id}")
+def api_get_composition(comp_id: str):
+    comp = compose_db.get_composition(comp_id)
+    if not comp:
+        raise HTTPException(404, "Composition not found")
+    comp["segments"] = compose_db.get_segments(comp_id)
+    comp["voice_ranges"] = compose_db.get_voice_ranges(comp_id)
+    comp["sfx"] = compose_db.get_sfx(comp_id)
+    return comp
+
+
+class ComposePatchBody(BaseModel):
+    title: Optional[str] = None
+    niche: Optional[str] = None
+    target_sec: Optional[float] = None
+    hook_text: Optional[str] = None
+    hook_animation: Optional[str] = None
+    voiceover_source: Optional[str] = None
+    voiceover_kokoro_voice: Optional[str] = None
+    voiceover_kokoro_text: Optional[str] = None
+    captions_mode: Optional[str] = None
+    captions_text: Optional[str] = None
+    caption_preset: Optional[str] = None
+    bed_music_file: Optional[str] = None
+    bed_music_gain_db: Optional[float] = None
+    bed_music_duck: Optional[int] = None
+    watermark_text: Optional[str] = None
+
+
+@app.patch("/api/compositions/{comp_id}")
+def api_patch_composition(comp_id: str, body: ComposePatchBody):
+    comp = compose_db.get_composition(comp_id)
+    if not comp:
+        raise HTTPException(404, "Composition not found")
+    fields = {k: v for k, v in body.model_dump().items() if v is not None}
+    if fields:
+        compose_db.update_composition(comp_id, **fields)
+    return {"ok": True}
+
+
+@app.delete("/api/compositions/{comp_id}")
+def api_delete_composition(comp_id: str):
+    comp = compose_db.get_composition(comp_id)
+    if not comp:
+        raise HTTPException(404, "Composition not found")
+    compose_db.delete_composition(comp_id)
+    return {"ok": True}
+
+
+class SegmentCreateBody(BaseModel):
+    kind: str
+    source_url: Optional[str] = None
+    label: Optional[str] = None
+
+
+@app.post("/api/compositions/{comp_id}/segments")
+def api_create_segment(comp_id: str, body: SegmentCreateBody):
+    comp = compose_db.get_composition(comp_id)
+    if not comp:
+        raise HTTPException(404, "Composition not found")
+    result = compose_db.create_segment(comp_id, body.kind, body.source_url, body.label)
+    return result
+
+
+@app.post("/api/compositions/{comp_id}/segments/upload")
+async def api_upload_segment(comp_id: str, kind: str, file: UploadFile = File(...)):
+    comp = compose_db.get_composition(comp_id)
+    if not comp:
+        raise HTTPException(404, "Composition not found")
+    result = compose_db.create_segment(comp_id, kind, label=file.filename)
+    seg_idx = result["idx"]
+    seg_dir = compose_db._comp_dir(comp_id) / "segments" / str(seg_idx)
+    seg_dir.mkdir(parents=True, exist_ok=True)
+    suffix = Path(file.filename).suffix or ".mp4"
+    dest = seg_dir / f"source{suffix}"
+    content = await file.read()
+    dest.write_bytes(content)
+    compose_db.update_segment(result["id"], source_file=str(dest))
+    return result
+
+
+class SegmentPatchBody(BaseModel):
+    label: Optional[str] = None
+    trim_in: Optional[float] = None
+    trim_out: Optional[float] = None
+    duration: Optional[float] = None
+    motion: Optional[str] = None
+    transition_to_next: Optional[str] = None
+    transition_dur_ms: Optional[int] = None
+    transition_sfx_file: Optional[str] = None
+
+
+@app.patch("/api/segments/{seg_id}")
+def api_patch_segment(seg_id: str, body: SegmentPatchBody):
+    seg = compose_db.get_segment(seg_id)
+    if not seg:
+        raise HTTPException(404, "Segment not found")
+    fields = {k: v for k, v in body.model_dump().items() if v is not None}
+    if fields:
+        compose_db.update_segment(seg_id, **fields)
+    return {"ok": True}
+
+
+@app.delete("/api/segments/{seg_id}")
+def api_delete_segment(seg_id: str):
+    seg = compose_db.get_segment(seg_id)
+    if not seg:
+        raise HTTPException(404, "Segment not found")
+    compose_db.delete_segment(seg_id)
+    return {"ok": True}
+
+
+class SegmentOrderBody(BaseModel):
+    order: list
+
+
+@app.put("/api/compositions/{comp_id}/segments/order")
+def api_reorder_segments(comp_id: str, body: SegmentOrderBody):
+    comp = compose_db.get_composition(comp_id)
+    if not comp:
+        raise HTTPException(404, "Composition not found")
+    compose_db.reorder_segments(comp_id, body.order)
+    return {"ok": True}
+
+
+class SFXCreateBody(BaseModel):
+    at_sec: float
+    file: str
+    gain_db: Optional[float] = -6.0
+
+
+@app.post("/api/compositions/{comp_id}/sfx")
+def api_create_sfx(comp_id: str, body: SFXCreateBody):
+    comp = compose_db.get_composition(comp_id)
+    if not comp:
+        raise HTTPException(404, "Composition not found")
+    sfx_id = compose_db.create_sfx(comp_id, body.at_sec, body.file, body.gain_db)
+    return {"id": sfx_id}
+
+
+class SFXPatchBody(BaseModel):
+    at_sec: Optional[float] = None
+    file: Optional[str] = None
+    gain_db: Optional[float] = None
+
+
+@app.patch("/api/sfx/{sfx_id}")
+def api_patch_sfx(sfx_id: str, body: SFXPatchBody):
+    fields = {k: v for k, v in body.model_dump().items() if v is not None}
+    if fields:
+        compose_db.update_sfx(sfx_id, **fields)
+    return {"ok": True}
+
+
+@app.delete("/api/sfx/{sfx_id}")
+def api_delete_sfx(sfx_id: str):
+    compose_db.delete_sfx(sfx_id)
+    return {"ok": True}
+
+
+@app.get("/api/sfx-library")
+def api_sfx_library():
+    sfx_dir = Path(__file__).parent.parent / "assets" / "sfx"
+    if not sfx_dir.exists():
+        return []
+    items = []
+    for f in sorted(sfx_dir.iterdir()):
+        if f.suffix.lower() in (".wav", ".mp3", ".ogg"):
+            items.append({"name": f.stem, "path": str(f), "duration_sec": None})
+    return items
+
+
+@app.get("/api/music-library")
+def api_music_library():
+    music_dir = Path(__file__).parent.parent / "assets" / "music"
+    if not music_dir.exists():
+        return []
+    items = []
+    for f in sorted(music_dir.iterdir()):
+        if f.suffix.lower() in (".wav", ".mp3", ".ogg"):
+            items.append({"name": f.stem, "path": str(f), "duration_sec": None})
+    return items
+
+
+@app.get("/api/kokoro-voices")
+def api_kokoro_voices():
+    return [
+        {"id": "af_bella",   "label": "Bella (F)"},
+        {"id": "af_nicole",  "label": "Nicole (F)"},
+        {"id": "am_michael", "label": "Michael (M)"},
+        {"id": "am_adam",    "label": "Adam (M)"},
+    ]
+
+
+@app.post("/api/compositions/{comp_id}/voiceover/upload")
+async def api_voiceover_upload(comp_id: str, file: UploadFile = File(...)):
+    raise HTTPException(501, "Voiceover upload coming in Phase E (Step 3.14)")
+
+
+@app.post("/api/compositions/{comp_id}/voiceover/kokoro")
+def api_voiceover_kokoro(comp_id: str):
+    raise HTTPException(501, "Kokoro TTS coming in Phase E (Step 3.13)")
