@@ -3,6 +3,8 @@
 let _compEditorId = null;
 let _compEditorPoll = null;
 let _renderPoll = null;
+let _wfPeaks = [];          // cached peaks for current composition
+let _wfDuration = 0;        // cached voiceover duration
 const _segPatchTimers = {};
 const _RENDER_ACTIVE = ['render_queued', 'rendering'];
 
@@ -86,6 +88,7 @@ async function showComposeEditor(compId) {
   `;
 
   await loadPresets();
+  if (comp.voiceover_source) await _ceLoadVoicePeaks(compId);
   renderCESegments(comp.segments || []);
   renderCERightRail(comp);
   setupCEAddSegment(compId);
@@ -578,6 +581,71 @@ function renderCEPanelHook(comp) {
     </div>`;
 }
 
+const _WR_COLORS = ['#3b82f6','#a855f7','#0891b2','#f59e0b','#10b981','#ef4444'];
+
+function _wrColor(i) { return _WR_COLORS[i % _WR_COLORS.length]; }
+
+function _renderWaveformSVG(peaks) {
+  if (!peaks || !peaks.length) {
+    return `<svg class="ce-wf-svg"><text x="50%" y="50%" text-anchor="middle"
+      dominant-baseline="middle" fill="var(--text-dim)" font-size="11">
+      No voiceover loaded</text></svg>`;
+  }
+  const n = peaks.length;
+  const bars = peaks.map((p, i) => {
+    const h = Math.max(2, p * 100);
+    const y = (100 - h) / 2;
+    return `<rect x="${i}" y="${y.toFixed(1)}" width="1" height="${h.toFixed(1)}" fill="var(--accent)" opacity="0.7"/>`;
+  }).join('');
+  return `<svg class="ce-wf-svg" viewBox="0 0 ${n} 100" preserveAspectRatio="none">${bars}</svg>`;
+}
+
+function _renderWaveformRanges(ranges, dur) {
+  if (!dur || !ranges.length) return '';
+  return ranges.map((r, i) => {
+    const left = (r.start_sec / dur * 100).toFixed(2);
+    const width = ((r.end_sec - r.start_sec) / dur * 100).toFixed(2);
+    const col = _wrColor(i);
+    const snippet = r.snippet ? escAttr(r.snippet.slice(0, 20)) : `S${i}`;
+    return `
+      <div class="ce-wr-block" style="left:${left}%;width:${width}%;background:${col}" data-wr-idx="${i}"></div>
+      <div class="ce-wr-handle" style="left:${left}%;background:${col}" data-wr-id="${r.id}" data-side="start"></div>
+      <div class="ce-wr-handle" style="left:calc(${left}% + ${width}%);background:${col}" data-wr-id="${r.id}" data-side="end"></div>
+      <div class="ce-wr-label" style="left:${left}%;color:${col}">${snippet}</div>
+      <div class="ce-wr-time-badge" style="left:calc(${left}% + ${width}% - 28px)">${r.end_sec.toFixed(1)}s</div>`;
+  }).join('');
+}
+
+function _renderVoiceRangeList(ranges, comp) {
+  if (!ranges.length) {
+    return `<div style="color:var(--text-dim);font-size:11px;padding:4px 0">
+      No ranges — click Auto-split or drag handles above</div>`;
+  }
+  return ranges.map((r, i) => {
+    const col = _wrColor(i);
+    const segLabel = (comp.segments || []).find(s => s.idx === r.segment_idx)?.label || `Seg ${r.segment_idx}`;
+    return `
+      <div class="ce-wr-row">
+        <div class="ce-wr-dot" style="background:${col}"></div>
+        <span class="ce-wr-snippet" title="${escAttr(r.snippet || segLabel)}">${escHtml(r.snippet || segLabel)}</span>
+        <div class="ce-wr-nudge-group">
+          <button class="btn btn-ghost btn-sm ce-wr-nudge-btn" data-wr-id="${r.id}" data-field="start_sec" data-delta="-0.1">−</button>
+          <input class="form-input ce-wr-time-input" type="number" step="0.1" value="${r.start_sec.toFixed(2)}"
+                 data-wr-id="${r.id}" data-field="start_sec" />
+          <button class="btn btn-ghost btn-sm ce-wr-nudge-btn" data-wr-id="${r.id}" data-field="start_sec" data-delta="0.1">+</button>
+        </div>
+        <span style="color:var(--text-dim);font-size:10px;padding:0 2px">→</span>
+        <div class="ce-wr-nudge-group">
+          <button class="btn btn-ghost btn-sm ce-wr-nudge-btn" data-wr-id="${r.id}" data-field="end_sec" data-delta="-0.1">−</button>
+          <input class="form-input ce-wr-time-input" type="number" step="0.1" value="${r.end_sec.toFixed(2)}"
+                 data-wr-id="${r.id}" data-field="end_sec" />
+          <button class="btn btn-ghost btn-sm ce-wr-nudge-btn" data-wr-id="${r.id}" data-field="end_sec" data-delta="0.1">+</button>
+        </div>
+        <button class="btn btn-ghost btn-sm ce-wr-snap-btn" data-wr-id="${r.id}">⌖</button>
+      </div>`;
+  }).join('');
+}
+
 function renderCEPanelVoiceover(comp) {
   const voices = [
     { id: 'af_bella',   label: 'Bella (F)' },
@@ -585,6 +653,12 @@ function renderCEPanelVoiceover(comp) {
     { id: 'am_michael', label: 'Michael (M)' },
     { id: 'am_adam',    label: 'Adam (M)' },
   ];
+  const ranges = comp.voice_ranges || [];
+  const wfSVG = _renderWaveformSVG(_wfPeaks);
+  const wrOverlay = _renderWaveformRanges(ranges, _wfDuration);
+  const wrList = _renderVoiceRangeList(ranges, comp);
+  const hasVO = !!comp.voiceover_source;
+
   return `
     <div class="ce-field-group">
       <label class="form-label">Upload WAV / MP3</label>
@@ -606,8 +680,20 @@ function renderCEPanelVoiceover(comp) {
         Generate voiceover
       </button>
       <div class="form-label" style="margin-top:6px;color:var(--text-muted)" id="ce-vo-status">
-        ${comp.voiceover_source ? 'Source: ' + comp.voiceover_source : 'No voiceover yet'}
+        ${comp.voiceover_source ? 'Source: ' + comp.voiceover_source + (_wfDuration ? ' · ' + _wfDuration.toFixed(1) + 's' : '') : 'No voiceover yet'}
       </div>
+      ${hasVO ? `
+      <div class="ce-divider" style="margin-top:10px">— voice ranges —</div>
+      <div style="display:flex;gap:6px;margin-bottom:6px;align-items:center">
+        <span class="form-label" style="margin:0;flex:1">Waveform</span>
+        <button class="btn btn-ghost btn-sm" id="ce-wr-auto-btn">Auto-split</button>
+      </div>
+      <div class="ce-wf-wrap" id="ce-wf-container">
+        ${wfSVG}
+        <div class="ce-wf-ranges" id="ce-wf-ranges">${wrOverlay}</div>
+      </div>
+      <div class="ce-wr-list" id="ce-wr-list">${wrList}</div>
+      ` : ''}
     </div>`;
 }
 
@@ -687,6 +773,182 @@ function _cePatchComp(fields) {
   api('PATCH', '/compositions/' + _compEditorId, fields).catch(e => toast('Save error: ' + e.message, 'error'));
 }
 
+// ── Voiceover waveform helpers ──────────────────────────────────────────────
+
+async function _ceLoadVoicePeaks(compId) {
+  try {
+    const data = await api('GET', '/compositions/' + compId + '/voiceover/peaks');
+    _wfPeaks = data.peaks || [];
+    _wfDuration = data.duration_sec || 0;
+  } catch (_) {
+    _wfPeaks = []; _wfDuration = 0;
+  }
+}
+
+async function _ceRefreshVoicePanel(compId) {
+  await _ceLoadVoicePeaks(compId);
+  const comp = await api('GET', '/compositions/' + compId);
+  const body = document.getElementById('ce-panel-body-voiceover');
+  if (body) {
+    body.innerHTML = renderCEPanelVoiceover(comp);
+    _ceAttachVoiceHandlers(comp);
+  }
+}
+
+function _ceRebuildWaveformOverlay(ranges, dur) {
+  const el = document.getElementById('ce-wf-ranges');
+  if (el) el.innerHTML = _renderWaveformRanges(ranges, dur);
+  const listEl = document.getElementById('ce-wr-list');
+  if (listEl) {
+    // need comp for segment labels — re-fetch asynchronously
+    api('GET', '/compositions/' + _compEditorId).then(comp => {
+      listEl.innerHTML = _renderVoiceRangeList(comp.voice_ranges || [], comp);
+      _ceAttachRangeListHandlers(comp.voice_ranges || []);
+    }).catch(() => {});
+  }
+}
+
+let _wrDrag = null; // { rangeId, side, containerRect, dur, allRanges }
+let _wrDragListenersAdded = false;
+
+// Document-level mousemove/mouseup are wired once per page load.
+// Per-render only re-attaches mousedown on new handle elements.
+function _ceInitDragListeners() {
+  if (_wrDragListenersAdded) return;
+  _wrDragListenersAdded = true;
+
+  document.addEventListener('mousemove', e => {
+    if (!_wrDrag) return;
+    const pct = Math.max(0, Math.min(1, (e.clientX - _wrDrag.containerRect.left) / _wrDrag.containerRect.width));
+    const t = Math.round(pct * _wrDrag.dur * 100) / 100;
+    const r = _wrDrag.allRanges.find(r => r.id === _wrDrag.rangeId);
+    if (!r) return;
+    if (_wrDrag.side === 'start') {
+      r.start_sec = Math.min(t, r.end_sec - 0.1);
+    } else {
+      r.end_sec = Math.max(t, r.start_sec + 0.1);
+    }
+    const el = document.getElementById('ce-wf-ranges');
+    if (el) {
+      el.innerHTML = _renderWaveformRanges(_wrDrag.allRanges, _wrDrag.dur);
+      // Re-wire only the mousedown on newly inserted handles
+      _ceWireHandleMousedown(_wrDrag.allRanges, _wrDrag.dur);
+    }
+  });
+
+  document.addEventListener('mouseup', async () => {
+    if (!_wrDrag) return;
+    const drag = _wrDrag;
+    _wrDrag = null;
+    try {
+      await api('PUT', '/compositions/' + _compEditorId + '/voice-ranges', { ranges: drag.allRanges });
+      _ceRebuildWaveformOverlay(drag.allRanges, drag.dur);
+    } catch (e) { toast('Range save failed: ' + e.message, 'error'); }
+  });
+}
+
+function _ceWireHandleMousedown(ranges, dur) {
+  const container = document.getElementById('ce-wf-container');
+  if (!container || !dur) return;
+  container.querySelectorAll('.ce-wr-handle').forEach(handle => {
+    handle.addEventListener('mousedown', e => {
+      e.preventDefault();
+      const rangeId = handle.dataset.wrId;
+      const side = handle.dataset.side;
+      const r = ranges.find(r => r.id === rangeId);
+      if (!r) return;
+      _wrDrag = {
+        rangeId, side,
+        containerRect: container.getBoundingClientRect(),
+        dur, allRanges: ranges.map(x => ({ ...x })),
+      };
+    });
+  });
+}
+
+function _ceAttachWaveformDrag(ranges, dur) {
+  _ceInitDragListeners();
+  _ceWireHandleMousedown(ranges, dur);
+}
+
+function _ceAttachRangeListHandlers(ranges) {
+  document.querySelectorAll('.ce-wr-nudge-btn').forEach(btn => {
+    btn.onclick = async () => {
+      const rangeId = btn.dataset.wrId;
+      const field = btn.dataset.field;
+      const delta = parseFloat(btn.dataset.delta);
+      const r = ranges.find(r => r.id === rangeId);
+      if (!r) return;
+      const updated = { ...r, [field]: Math.max(0, Math.round((r[field] + delta) * 100) / 100) };
+      const newRanges = ranges.map(x => x.id === rangeId ? updated : x);
+      try {
+        await api('PUT', '/compositions/' + _compEditorId + '/voice-ranges', { ranges: newRanges });
+        _ceRebuildWaveformOverlay(newRanges, _wfDuration);
+      } catch (e) { toast('Range save failed: ' + e.message, 'error'); }
+    };
+  });
+
+  document.querySelectorAll('.ce-wr-time-input').forEach(input => {
+    input.onchange = async () => {
+      const rangeId = input.dataset.wrId;
+      const field = input.dataset.field;
+      const val = Math.max(0, parseFloat(input.value) || 0);
+      const r = ranges.find(r => r.id === rangeId);
+      if (!r) return;
+      const newRanges = ranges.map(x => x.id === rangeId ? { ...x, [field]: val } : x);
+      try {
+        await api('PUT', '/compositions/' + _compEditorId + '/voice-ranges', { ranges: newRanges });
+        _ceRebuildWaveformOverlay(newRanges, _wfDuration);
+      } catch (e) { toast('Range save failed: ' + e.message, 'error'); }
+    };
+  });
+
+  document.querySelectorAll('.ce-wr-snap-btn').forEach(btn => {
+    btn.onclick = async () => {
+      const rangeId = btn.dataset.wrId;
+      btn.textContent = '…';
+      btn.disabled = true;
+      try {
+        // Snap both sides
+        const r1 = await api('GET', `/compositions/${_compEditorId}/voice-ranges/snap?range_id=${rangeId}&side=start`);
+        const r2 = await api('GET', `/compositions/${_compEditorId}/voice-ranges/snap?range_id=${rangeId}&side=end`);
+        const newRanges = r2.ranges || [];
+        _ceRebuildWaveformOverlay(newRanges, _wfDuration);
+        toast('Snapped to silence', 'success');
+      } catch (e) { toast('Snap failed: ' + e.message, 'error'); }
+      finally { btn.textContent = '⌖'; btn.disabled = false; }
+    };
+  });
+}
+
+function _ceAttachVoiceHandlers(comp) {
+  const ranges = comp.voice_ranges || [];
+
+  // Auto-split
+  const autoBtn = document.getElementById('ce-wr-auto-btn');
+  if (autoBtn) {
+    autoBtn.onclick = async () => {
+      autoBtn.disabled = true;
+      autoBtn.textContent = 'Splitting…';
+      try {
+        const result = await api('POST', '/compositions/' + _compEditorId + '/voice-ranges/auto');
+        const newRanges = result.ranges || [];
+        const wfEl = document.getElementById('ce-wf-ranges');
+        if (wfEl) wfEl.innerHTML = _renderWaveformRanges(newRanges, _wfDuration);
+        const listEl = document.getElementById('ce-wr-list');
+        if (listEl) listEl.innerHTML = _renderVoiceRangeList(newRanges, comp);
+        _ceAttachWaveformDrag(newRanges, _wfDuration);
+        _ceAttachRangeListHandlers(newRanges);
+        toast(`${newRanges.length} range${newRanges.length !== 1 ? 's' : ''} set`, 'success');
+      } catch (e) { toast('Auto-split failed: ' + e.message, 'error'); }
+      finally { autoBtn.disabled = false; autoBtn.textContent = 'Auto-split'; }
+    };
+  }
+
+  _ceAttachWaveformDrag(ranges, _wfDuration);
+  _ceAttachRangeListHandlers(ranges);
+}
+
 function attachCERightRailHandlers(comp) {
   // Output length
   const targetSec = document.getElementById('ce-target-sec');
@@ -734,6 +996,7 @@ function attachCERightRailHandlers(comp) {
         if (fnEl) fnEl.textContent = '';
         document.getElementById('ce-vo-file').value = '';
         toast(`Voiceover uploaded (${result.duration_sec.toFixed(1)}s)`, 'success');
+        await _ceRefreshVoicePanel(_compEditorId);
       } catch (e) {
         if (statusEl) statusEl.textContent = 'Upload failed';
         toast('Upload error: ' + e.message, 'error');
@@ -756,6 +1019,7 @@ function attachCERightRailHandlers(comp) {
         const result = await api('POST', '/compositions/' + _compEditorId + '/voiceover/kokoro');
         if (statusEl) statusEl.textContent = `Source: kokoro · ${result.duration_sec.toFixed(1)}s`;
         toast('Voiceover generated (' + result.duration_sec.toFixed(1) + 's)', 'success');
+        await _ceRefreshVoicePanel(_compEditorId);
       } catch (e) {
         if (statusEl) statusEl.textContent = 'Generation failed';
         toast('Kokoro error: ' + e.message, 'error');
@@ -816,6 +1080,9 @@ function attachCERightRailHandlers(comp) {
       } catch (e) { toast('Error: ' + e.message, 'error'); }
     };
   }
+
+  // Voice ranges (waveform drag + list nudge/snap)
+  _ceAttachVoiceHandlers(comp);
 }
 
 // ── Timeline (Phase D: Steps 3.10 – 3.12) ────────────────────────────────

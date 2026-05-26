@@ -876,18 +876,102 @@ def api_voiceover_peaks(comp_id: str):
     vo_path = Path("data") / "compositions" / comp_id / "voiceover.wav"
     if not vo_path.exists():
         return {"peaks": [], "duration_sec": 0}
-    # Full waveform analysis comes in Step 3.15; return duration-only stub
     try:
-        import subprocess as _sp
-        r = _sp.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-             "-of", "default=nw=1:nk=1", str(vo_path)],
-            capture_output=True, text=True,
-        )
-        dur = float(r.stdout.strip()) if r.returncode == 0 else 0.0
+        import librosa, numpy as np
+        y, sr = librosa.load(str(vo_path), sr=None, mono=True)
+        dur = float(len(y) / sr)
+        n_samples = 1000
+        frame_len = max(1, len(y) // n_samples)
+        frames = [y[i * frame_len:(i + 1) * frame_len] for i in range(n_samples)]
+        peaks = [float(np.max(np.abs(f))) if len(f) else 0.0 for f in frames]
+        max_peak = max(peaks) or 1.0
+        peaks = [round(p / max_peak, 4) for p in peaks]
     except Exception:
-        dur = 0.0
-    return {"peaks": [], "duration_sec": dur}
+        return {"peaks": [], "duration_sec": 0}
+    return {"peaks": peaks, "duration_sec": round(dur, 3)}
+
+
+@app.post("/api/compositions/{comp_id}/voice-ranges/auto")
+def api_voice_ranges_auto(comp_id: str):
+    comp = compose_db.get_composition(comp_id)
+    if not comp:
+        raise HTTPException(404, "Composition not found")
+    vo_path = Path("data") / "compositions" / comp_id / "voiceover.wav"
+    if not vo_path.exists():
+        raise HTTPException(400, "No voiceover — upload or generate one first")
+    try:
+        import librosa, numpy as np
+        y, sr = librosa.load(str(vo_path), sr=None, mono=True)
+        intervals = librosa.effects.split(y, top_db=30)
+    except Exception as exc:
+        raise HTTPException(500, f"librosa error: {exc}")
+    segs = compose_db.get_segments(comp_id)
+    n_segs = max(len(segs), 1)
+    # Merge close intervals and assign to segments
+    merged: list[tuple[float, float]] = []
+    for start_sample, end_sample in intervals:
+        s = float(start_sample) / sr
+        e = float(end_sample) / sr
+        if merged and s - merged[-1][1] < 0.15:
+            merged[-1] = (merged[-1][0], e)
+        else:
+            merged.append((s, e))
+    # Build one range per segment (split merged regions evenly across segments)
+    ranges = []
+    for i, (s, e) in enumerate(merged[:n_segs]):
+        seg_idx = segs[i]["idx"] if i < len(segs) else i
+        ranges.append({"segment_idx": seg_idx, "start_sec": round(s, 3), "end_sec": round(e, 3)})
+    compose_db.replace_voice_ranges(comp_id, ranges)
+    return {"ranges": compose_db.get_voice_ranges(comp_id)}
+
+
+@app.put("/api/compositions/{comp_id}/voice-ranges")
+def api_voice_ranges_put(comp_id: str, body: dict):
+    comp = compose_db.get_composition(comp_id)
+    if not comp:
+        raise HTTPException(404, "Composition not found")
+    ranges = body.get("ranges", [])
+    compose_db.replace_voice_ranges(comp_id, ranges)
+    return {"ok": True}
+
+
+@app.get("/api/compositions/{comp_id}/voice-ranges/snap")
+def api_voice_range_snap(comp_id: str, range_id: str, side: str):
+    """Snap start_sec or end_sec of a range to the nearest silence boundary within ±0.5s."""
+    comp = compose_db.get_composition(comp_id)
+    if not comp:
+        raise HTTPException(404, "Composition not found")
+    ranges = compose_db.get_voice_ranges(comp_id)
+    target = next((r for r in ranges if r["id"] == range_id), None)
+    if not target:
+        raise HTTPException(404, "Range not found")
+    vo_path = Path("data") / "compositions" / comp_id / "voiceover.wav"
+    if not vo_path.exists():
+        raise HTTPException(400, "No voiceover on disk")
+    current_t = target["start_sec"] if side == "start" else target["end_sec"]
+    try:
+        import librosa, numpy as np
+        y, sr = librosa.load(str(vo_path), sr=None, mono=True)
+        intervals = librosa.effects.split(y, top_db=30)
+        # Collect all silence boundaries
+        boundaries = []
+        for s, e in intervals:
+            boundaries.extend([float(s) / sr, float(e) / sr])
+        if not boundaries:
+            return {"snapped": current_t}
+        closest = min(boundaries, key=lambda b: abs(b - current_t))
+        snapped = closest if abs(closest - current_t) <= 0.5 else current_t
+    except Exception:
+        snapped = current_t
+    # Persist the snapped value
+    updated = {k: v for k, v in target.items()}
+    if side == "start":
+        updated["start_sec"] = round(snapped, 3)
+    else:
+        updated["end_sec"] = round(snapped, 3)
+    new_ranges = [updated if r["id"] == range_id else r for r in ranges]
+    compose_db.replace_voice_ranges(comp_id, new_ranges)
+    return {"snapped": round(snapped, 3), "ranges": compose_db.get_voice_ranges(comp_id)}
 
 
 @app.get("/compositions/{comp_id}/thumb/{n}")

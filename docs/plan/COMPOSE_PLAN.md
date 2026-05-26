@@ -844,7 +844,7 @@ unified rows with a `pipeline` field.
 
   **Acceptance test:** Upload any audio → `voiceover.wav` is 48k stereo (ffprobe).
 
-- [ ] **Step 3.15 — Voiceover waveform editor + ranges**
+- [x] **Step 3.15 — Voiceover waveform editor + ranges**
 
   **Deliverables:**
   - `GET /api/compositions/{id}/voiceover/peaks`: load `voiceover.wav` via librosa,

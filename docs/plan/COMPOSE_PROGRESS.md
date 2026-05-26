@@ -345,3 +345,35 @@ Add one YouTube segment with trim → wait for download (progress bar) → click
 - `dashboard/static/app-compose-editor.js` — replaced "coming in Step 3.14" toast stub with real upload handler: validates file selected, disables button with "Uploading…" label, POSTs `FormData` to `/voiceover/upload`, on success updates `#ce-vo-status` div with source + duration and clears the file input, on error shows error toast; re-enables button in both paths.
 
 **Acceptance test:** Upload a 22050 Hz mono WAV → `ffprobe data/compositions/<id>/voiceover.wav` shows `sample_rate=48000, channels=2, codec_name=pcm_s16le`. Response: `{ok:true, duration_sec:1.0, peaks_url:…}`.
+
+---
+
+### Step 3.15 — Voiceover waveform editor + ranges ✅
+
+**Files edited:**
+- `dashboard/main.py`:
+  - `api_voiceover_peaks` — replaced stub with real librosa implementation: loads WAV mono, computes 1000-sample peak envelope (max abs per frame), normalizes to [0..1], returns `{peaks, duration_sec}`.
+  - Added `POST /api/compositions/{comp_id}/voice-ranges/auto` — runs `librosa.effects.split(top_db=30)`, merges close intervals (<150ms gap), assigns one range per segment (up to N segments), replaces existing rows via `compose_db.replace_voice_ranges`.
+  - Added `PUT /api/compositions/{comp_id}/voice-ranges` — replaces ranges from body `{ranges:[…]}`.
+  - Added `GET /api/compositions/{comp_id}/voice-ranges/snap?range_id=…&side=start|end` — finds all silence boundaries via `librosa.effects.split`, snaps the requested side to the nearest boundary within ±0.5s, persists, returns `{snapped, ranges}`.
+
+- `dashboard/static/style.css` — added `.ce-wf-wrap`, `.ce-wf-svg`, `.ce-wf-ranges`, `.ce-wr-block`, `.ce-wr-handle`, `.ce-wr-label`, `.ce-wr-time-badge`, `.ce-wr-list`, `.ce-wr-row`, `.ce-wr-dot`, `.ce-wr-snippet`, `.ce-wr-nudge-group`, `.ce-wr-snap-btn`.
+
+- `dashboard/static/app-compose-editor.js`:
+  - Added globals `_wfPeaks`, `_wfDuration` (module-level cache for current composition's peaks).
+  - Added `_WR_COLORS[]` + `_wrColor(i)` — per-range color assignment.
+  - Added `_renderWaveformSVG(peaks)` — SVG bars at `viewBox="0 0 1000 100"`, normalized height.
+  - Added `_renderWaveformRanges(ranges, dur)` — colored block + two drag handles + label + time badge per range.
+  - Added `_renderVoiceRangeList(ranges, comp)` — per-range row: colored dot, snippet/label, start/end nudge inputs + ±0.1s buttons, snap button (⌖).
+  - Rewrote `renderCEPanelVoiceover(comp)` — existing upload/Kokoro controls preserved; waveform container + range list appended when voiceover exists.
+  - Added `_ceLoadVoicePeaks(compId)` — fetches `/voiceover/peaks`, caches into `_wfPeaks`/`_wfDuration`.
+  - Added `_ceRefreshVoicePanel(compId)` — reloads peaks + comp, re-renders voiceover panel body in place.
+  - Added `_ceRebuildWaveformOverlay(ranges, dur)` — partial re-render: overlay + list without full panel re-render.
+  - Added `_ceAttachWaveformDrag(ranges, dur)` — mousedown on `.ce-wr-handle` → document mousemove/mouseup drag; live-updates overlay, persists via `PUT /voice-ranges` on mouseup.
+  - Added `_ceAttachRangeListHandlers(ranges)` — nudge button delta updates + direct time input changes + snap button calling `/voice-ranges/snap`.
+  - Added `_ceAttachVoiceHandlers(comp)` — auto-split button + delegates to drag + list handlers.
+  - `showComposeEditor` — calls `await _ceLoadVoicePeaks(compId)` before `renderCERightRail` if voiceover exists.
+  - Upload/Kokoro success callbacks — call `await _ceRefreshVoicePanel(_compEditorId)` after success to show waveform.
+  - `attachCERightRailHandlers` — calls `_ceAttachVoiceHandlers(comp)` at end.
+
+**Acceptance test:** Upload a 30s WAV → waveform appears in Voiceover panel → click Auto-split → N ranges appear as colored overlays → drag a handle left/right → release → value persists in DB → reload page → handle position preserved. Nudge ±0.1s buttons update range boundaries. Snap button (⌖) snaps to nearest silence.

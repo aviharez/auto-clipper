@@ -2556,3 +2556,107 @@ hr { border: none; border-top: 1px solid var(--border); margin: 14px 0; }
   padding: 20px;
   line-height: 1.6;
 }
+
+/* ── Voiceover waveform editor (Step 3.15) ───────────────────────────────── */
+
+.ce-wf-wrap {
+  position: relative;
+  width: 100%;
+  height: 72px;
+  background: var(--bg-2);
+  border-radius: 4px;
+  overflow: hidden;
+  cursor: crosshair;
+  user-select: none;
+}
+
+.ce-wf-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.ce-wf-ranges {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.ce-wr-block {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  opacity: 0.28;
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.ce-wr-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  margin-left: -3px;
+  border-radius: 2px;
+  cursor: ew-resize;
+  pointer-events: all;
+  z-index: 2;
+}
+
+.ce-wr-handle:hover { opacity: 0.9; }
+
+.ce-wr-label {
+  position: absolute;
+  top: 2px;
+  font-size: 9px;
+  font-weight: 600;
+  color: #fff;
+  pointer-events: none;
+  padding: 0 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 60px;
+}
+
+.ce-wr-time-badge {
+  position: absolute;
+  bottom: 2px;
+  font-size: 8px;
+  color: rgba(255,255,255,0.8);
+  pointer-events: none;
+  padding: 0 3px;
+}
+
+/* range list below waveform */
+.ce-wr-list { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+
+.ce-wr-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 3px 4px;
+  border-radius: 3px;
+  background: var(--bg-2);
+}
+
+.ce-wr-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.ce-wr-snippet {
+  flex: 1;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ce-wr-nudge-group { display: flex; gap: 2px; align-items: center; }
+.ce-wr-nudge-group input { width: 44px; font-size: 10px; padding: 1px 3px; }
+.ce-wr-nudge-group button { font-size: 10px; padding: 1px 4px; }
+.ce-wr-snap-btn { font-size: 10px; padding: 1px 5px; color: var(--text-muted); }
