@@ -335,3 +335,13 @@ Add one YouTube segment with trim → wait for download (progress bar) → click
 - `clipper/compose/stages/kokoro.py` — module-level `_kokoro` singleton (lazy-loaded on first call); `_split_sentences(text, max_chars=150)` splits on sentence-boundary punctuation then word-wraps overlong chunks; `generate(text, voice_id, out_path)` chunks text, runs `kokoro_onnx.Kokoro.create()` per chunk (24 kHz mono), resamples each to 48 kHz via `librosa.resample`, concatenates, duplicates to stereo, writes PCM_16 WAV via `soundfile`; returns duration in seconds
 
 **Acceptance test:** Type a 1-sentence script in Captions panel → select Kokoro voice → click Generate voiceover → button shows "Generating…" → after model run, `data/compositions/<id>/voiceover.wav` exists → `ffprobe` shows 48000 Hz stereo → status div updates with source + duration → toast confirms success.
+
+---
+
+### Step 3.14 — Voiceover upload (alternate path) ✅
+
+**Files edited:**
+- `dashboard/main.py:api_voiceover_upload` — replaced 501 stub with real implementation: accepts multipart WAV/MP3/M4A; validates extension; writes raw upload to `voiceover_in<ext>` temp file; resamples to 48k stereo via `ffmpeg -ar 48000 -ac 2`; deletes temp file; probes output duration via `_probe_duration`; persists `voiceover_source='upload'`; returns `{ok, duration_sec, peaks_url}`.
+- `dashboard/static/app-compose-editor.js` — replaced "coming in Step 3.14" toast stub with real upload handler: validates file selected, disables button with "Uploading…" label, POSTs `FormData` to `/voiceover/upload`, on success updates `#ce-vo-status` div with source + duration and clears the file input, on error shows error toast; re-enables button in both paths.
+
+**Acceptance test:** Upload a 22050 Hz mono WAV → `ffprobe data/compositions/<id>/voiceover.wav` shows `sample_rate=48000, channels=2, codec_name=pcm_s16le`. Response: `{ok:true, duration_sec:1.0, peaks_url:…}`.

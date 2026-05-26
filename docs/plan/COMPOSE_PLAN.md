@@ -835,7 +835,7 @@ unified rows with a `pipeline` field.
   ffprobe data\compositions\<id>\voiceover.wav  # should show 48000 Hz stereo
   ```
 
-- [ ] **Step 3.14 — Voiceover upload (alternate path)**
+- [x] **Step 3.14 — Voiceover upload (alternate path)**
 
   **Deliverables:**
   - `POST /api/compositions/{id}/voiceover/upload`: accept multipart WAV/MP3/M4A;

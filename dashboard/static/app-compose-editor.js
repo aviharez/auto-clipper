@@ -710,10 +710,38 @@ function attachCERightRailHandlers(comp) {
   const hookAnim = document.getElementById('ce-hook-anim');
   if (hookAnim) hookAnim.onchange = () => _cePatchComp({ hook_animation: hookAnim.value });
 
-  // Voiceover stubs
+  // Voiceover upload
   const voUploadBtn = document.getElementById('ce-vo-upload-btn');
   if (voUploadBtn) {
-    voUploadBtn.onclick = () => toast('Voiceover upload coming in Step 3.14', '');
+    voUploadBtn.onclick = async () => {
+      const f = document.getElementById('ce-vo-file')?.files[0];
+      if (!f) { toast('Choose a WAV, MP3, or M4A file first', ''); return; }
+      voUploadBtn.disabled = true;
+      voUploadBtn.textContent = 'Uploading…';
+      const statusEl = document.getElementById('ce-vo-status');
+      if (statusEl) statusEl.textContent = 'Uploading…';
+      try {
+        const fd = new FormData();
+        fd.append('file', f);
+        const res = await fetch('/api/compositions/' + _compEditorId + '/voiceover/upload', { method: 'POST', body: fd });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ detail: res.statusText }));
+          throw new Error(err.detail || res.statusText);
+        }
+        const result = await res.json();
+        if (statusEl) statusEl.textContent = `Source: upload · ${result.duration_sec.toFixed(1)}s`;
+        const fnEl = document.getElementById('ce-vo-fname');
+        if (fnEl) fnEl.textContent = '';
+        document.getElementById('ce-vo-file').value = '';
+        toast(`Voiceover uploaded (${result.duration_sec.toFixed(1)}s)`, 'success');
+      } catch (e) {
+        if (statusEl) statusEl.textContent = 'Upload failed';
+        toast('Upload error: ' + e.message, 'error');
+      } finally {
+        voUploadBtn.disabled = false;
+        voUploadBtn.textContent = 'Upload';
+      }
+    };
   }
   const kokoroBtn = document.getElementById('ce-kokoro-btn');
   if (kokoroBtn) {

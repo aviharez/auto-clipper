@@ -789,7 +789,33 @@ def api_kokoro_voices():
 
 @app.post("/api/compositions/{comp_id}/voiceover/upload")
 async def api_voiceover_upload(comp_id: str, file: UploadFile = File(...)):
-    raise HTTPException(501, "Voiceover upload coming in Phase E (Step 3.14)")
+    comp = compose_db.get_composition(comp_id)
+    if not comp:
+        raise HTTPException(404, "Composition not found")
+    suffix = Path(file.filename or "audio.wav").suffix.lower()
+    if suffix not in {".wav", ".mp3", ".m4a"}:
+        raise HTTPException(400, f"Unsupported format {suffix!r}; use WAV, MP3, or M4A")
+    comp_dir = Path("data") / "compositions" / comp_id
+    comp_dir.mkdir(parents=True, exist_ok=True)
+    tmp_path = comp_dir / f"voiceover_in{suffix}"
+    tmp_path.write_bytes(await file.read())
+    out_path = comp_dir / "voiceover.wav"
+    import subprocess as _sp
+    r = _sp.run(
+        ["ffmpeg", "-y", "-i", str(tmp_path), "-ar", "48000", "-ac", "2", str(out_path)],
+        capture_output=True,
+    )
+    tmp_path.unlink(missing_ok=True)
+    if r.returncode != 0:
+        raise HTTPException(500, f"ffmpeg resample failed: {r.stderr.decode()[-500:]}")
+    from clipper.compose.stages.ingest import _probe_duration
+    duration = _probe_duration(out_path) or 0.0
+    compose_db.update_composition(comp_id, voiceover_source="upload")
+    return {
+        "ok": True,
+        "duration_sec": duration,
+        "peaks_url": f"/api/compositions/{comp_id}/voiceover/peaks",
+    }
 
 
 @app.post("/api/compositions/{comp_id}/voiceover/kokoro")
