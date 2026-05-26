@@ -2,13 +2,16 @@
 
 let _compEditorId = null;
 let _compEditorPoll = null;
+let _renderPoll = null;
 const _segPatchTimers = {};
+const _RENDER_ACTIVE = ['render_queued', 'rendering'];
 
 async function showComposeEditor(compId) {
   clearTimeout(_composePoll);
   clearTimeout(_listPoll);
   clearTimeout(_detailPoll);
   clearTimeout(_compEditorPoll);
+  clearTimeout(_renderPoll);
   _compEditorId = compId;
   setSidebarNav('compose');
 
@@ -22,6 +25,10 @@ async function showComposeEditor(compId) {
     return;
   }
 
+  const segCount = (comp.segments || []).filter(s => s.status !== 'failed').length;
+  const renderBtnDisabled = segCount === 0 ? 'disabled' : '';
+  const renderBtnLabel = _RENDER_ACTIVE.includes(comp.status) ? 'Rendering…' : 'Render preview';
+
   app.innerHTML = `
     <div class="compose-editor">
       <div class="compose-editor-header">
@@ -29,6 +36,8 @@ async function showComposeEditor(compId) {
         <span class="breadcrumb-sep">›</span>
         <span class="breadcrumb-title" id="ce-title">${escAttr(comp.title)}</span>
         <div style="flex:1"></div>
+        <button class="btn btn-primary btn-sm" id="ce-render-btn" ${renderBtnDisabled}
+                style="margin-right:8px">${renderBtnLabel}</button>
         ${badge(comp.status)}
       </div>
       <div class="compose-editor-body">
@@ -80,11 +89,89 @@ async function showComposeEditor(compId) {
   renderCESegments(comp.segments || []);
   renderCERightRail(comp);
   setupCEAddSegment(compId);
+  setupCERenderBtn(compId, comp);
 
   // 3.5b: start polling if any segment is downloading
   if ((comp.segments || []).some(s => s.status === 'downloading')) {
     _startSegIngestPoll(compId);
   }
+
+  // 3.9: restore video player if already rendered, or resume render poll if rendering
+  if (comp.status === 'rendered' || comp.status === 'finalized' || comp.status === 'delivered_local' || comp.status === 'delivered_gdrive') {
+    _showCenterVideo(compId);
+  } else if (_RENDER_ACTIVE.includes(comp.status)) {
+    _startRenderPoll(compId);
+  }
+}
+
+// ── 3.9: Render button + render polling ────────────────────────────────────
+
+function setupCERenderBtn(compId, comp) {
+  const btn = document.getElementById('ce-render-btn');
+  if (!btn) return;
+  btn.onclick = async () => {
+    btn.disabled = true;
+    btn.textContent = 'Queuing…';
+    try {
+      await api('POST', '/compositions/' + compId + '/render');
+      btn.textContent = 'Rendering…';
+      _startRenderPoll(compId);
+    } catch (e) {
+      toast('Render error: ' + e.message, 'error');
+      btn.disabled = false;
+      btn.textContent = 'Render preview';
+    }
+  };
+}
+
+function _startRenderPoll(compId) {
+  clearTimeout(_renderPoll);
+  _renderPoll = setTimeout(async () => {
+    if (_compEditorId !== compId) return;
+    try {
+      const comp = await api('GET', '/compositions/' + compId);
+      // Update status pill in header
+      const pillEl = document.querySelector('.compose-editor-header .pill');
+      if (pillEl) pillEl.outerHTML = badge(comp.status);
+      const btn = document.getElementById('ce-render-btn');
+      if (comp.status === 'rendered' || comp.status === 'finalized') {
+        if (btn) { btn.disabled = false; btn.textContent = 'Re-render'; }
+        _showCenterVideo(compId);
+        return; // stop polling
+      } else if (comp.status === 'failed') {
+        if (btn) { btn.disabled = false; btn.textContent = 'Render preview'; }
+        _showCenterError(comp.error || 'Render failed');
+        return; // stop polling
+      }
+      // Still rendering — continue
+      _startRenderPoll(compId);
+    } catch (_) {
+      _startRenderPoll(compId); // retry on network error
+    }
+  }, 2500);
+}
+
+function _showCenterVideo(compId) {
+  const center = document.getElementById('ce-center');
+  if (!center) return;
+  const t = Date.now();
+  center.innerHTML = `
+    <video id="ce-preview-video"
+           src="/compositions/${compId}/render?t=${t}"
+           controls
+           style="width:100%;height:100%;object-fit:contain;background:#000;border-radius:8px">
+    </video>`;
+}
+
+function _showCenterError(msg) {
+  const center = document.getElementById('ce-center');
+  if (!center) return;
+  center.innerHTML = `
+    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:8px;padding:16px">
+      <div style="color:#f87171;font-size:14px;font-weight:600">Render failed</div>
+      <div style="color:var(--text-dim);font-size:11px;white-space:pre-wrap;max-width:300px;text-align:center">${escHtml(msg.slice(0, 400))}</div>
+      <div style="color:var(--text-muted);font-size:11px">Fix the issue and click Render preview again.</div>
+    </div>`;
 }
 
 // 3.5b: Poll every 1.5s while any segment is downloading; auto-fill trim_out on ready
@@ -115,6 +202,15 @@ function renderCESegments(segments) {
   const countEl = document.getElementById('ce-seg-count');
   if (!list) return;
   if (countEl) countEl.textContent = segments.length ? `${segments.length} seg${segments.length !== 1 ? 's' : ''}` : '';
+  // Enable render button iff ≥1 non-failed segment and not actively rendering
+  const btn = document.getElementById('ce-render-btn');
+  if (btn) {
+    const activeCount = segments.filter(s => s.status !== 'failed').length;
+    const currentlyRendering = btn.textContent === 'Rendering…' || btn.textContent === 'Queuing…';
+    if (!currentlyRendering) {
+      btn.disabled = activeCount === 0;
+    }
+  }
   if (!segments.length) {
     list.innerHTML = '<div class="ce-segs-empty">No segments yet.</div>';
     return;

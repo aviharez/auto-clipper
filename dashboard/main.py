@@ -629,7 +629,9 @@ def api_create_segment(comp_id: str, body: SegmentCreateBody):
         raise HTTPException(404, "Composition not found")
     result = compose_db.create_segment(comp_id, body.kind, body.source_url, body.label)
     if body.kind == "yt" and body.source_url:
-        compose_db.update_segment(result["id"], status="downloading", download_progress=0)
+        # submit_ingest will set status='downloading' itself before starting yt-dlp.
+        # Do NOT set it here — the ingest thread reads a fresh copy on entry, so
+        # pre-setting 'downloading' would trigger the race-fix wait loop and stall the download.
         compose_runner.submit_ingest(comp_id, result["id"])
     return result
 
@@ -793,3 +795,27 @@ async def api_voiceover_upload(comp_id: str, file: UploadFile = File(...)):
 @app.post("/api/compositions/{comp_id}/voiceover/kokoro")
 def api_voiceover_kokoro(comp_id: str):
     raise HTTPException(501, "Kokoro TTS coming in Phase E (Step 3.13)")
+
+
+@app.post("/api/compositions/{comp_id}/render")
+def api_render_composition(comp_id: str):
+    comp = compose_db.get_composition(comp_id)
+    if not comp:
+        raise HTTPException(404, "Composition not found")
+    segments = compose_db.get_segments(comp_id)
+    active = [s for s in segments if s.get("status") != "failed"]
+    if not active:
+        raise HTTPException(400, "No valid segments to render (add at least one segment)")
+    compose_db.update_composition(comp_id, status="render_queued")
+    return {"status": "render_queued"}
+
+
+@app.get("/compositions/{comp_id}/render")
+def serve_composition_render(comp_id: str):
+    comp = compose_db.get_composition(comp_id)
+    if not comp or not comp.get("last_render_path"):
+        raise HTTPException(404, "No render available yet")
+    path = Path(comp["last_render_path"])
+    if not path.exists():
+        raise HTTPException(404, "Render file not found on disk")
+    return FileResponse(str(path), media_type="video/mp4", headers={"Cache-Control": "no-cache"})

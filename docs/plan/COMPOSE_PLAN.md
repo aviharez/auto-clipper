@@ -643,7 +643,7 @@ unified rows with a `pipeline` field.
 > preview pane.** No audio, no captions, no hook, no timeline yet. This is proof of
 > life for the entire render plumbing.
 
-- [ ] **Step 3.6 — Segment normalize (cut + reframe)**
+- [x] **Step 3.6 — Segment normalize (cut + reframe)**
 
   > **Note:** `clipper/compose/stages/ingest.py` already exists from bridge
   > Step 3.5b — it handles yt-dlp download, progress reporting, ffprobe
@@ -672,7 +672,7 @@ unified rows with a `pipeline` field.
   ```
   Expected: ffprobe shows 1080×1920, 30fps, ~5s duration, 48000 Hz stereo audio.
 
-- [ ] **Step 3.7 — Multi-segment picture-only concat with transitions**
+- [x] **Step 3.7 — Multi-segment picture-only concat with transitions**
 
   **Deliverables:**
   - `clipper/compose/stages/concat.py`:
@@ -691,7 +691,7 @@ unified rows with a `pipeline` field.
   **Acceptance test:** Manually invoke for 2 segments with a fade transition → output
   plays in VLC, transitions visible at the seam.
 
-- [ ] **Step 3.8 — Compose render executor + render orchestrator**
+- [x] **Step 3.8 — Compose render executor + render orchestrator**
 
   > **Note:** `clipper/compose/runner.py` already exists from bridge Step
   > 3.5b with `_ingest_executor` (max_workers=2) and a stub `start()` that
@@ -734,7 +734,7 @@ unified rows with a `pipeline` field.
   `render_queued → rendering → rendered`. `data/compositions/<id>/last_render.mp4`
   exists and plays.
 
-- [ ] **Step 3.9 — Render preview button + polling + center-pane player**
+- [x] **Step 3.9 — Render preview button + polling + center-pane player**
 
   **Deliverables:**
   - `POST /api/compositions/{id}/render` endpoint: validates ≥1 segment with status≠

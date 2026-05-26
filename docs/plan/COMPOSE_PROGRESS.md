@@ -208,3 +208,52 @@ Opus 4.7 read-only eval of the bridge phase flagged that the trim-validation cla
 # Edit segment trim_in → reload Compose list → "Updated" column reflects the edit time.
 # Delete a segment → folder data\compositions\<id>\segments\<idx>\ is gone, "Updated" bumped.
 ```
+
+---
+
+## Phase C — Smoke render (COMPLETED 2026-05-26)
+
+### Step 3.6 — Segment normalize ✅
+
+**Files created:**
+- `clipper/compose/stages/image_motion.py` — `render_image_segment(src, dur, motion, out_path)`: zoompan-based zoom_in/zoom_out, slide_lr/slide_rl, static; all output 1080×1920/30fps/yuv420p/48k stereo
+- `clipper/compose/stages/normalize.py` — `run_for_segment(comp, seg)`: video kinds → precise re-encode with `-ss`/`-to` seek + centered crop + aresample; image kind → delegates to image_motion.py; silent track added via `anullsrc` when source has no audio; idempotent on `status='normalized'`; updates segment status to `'normalized'` on success or `'failed'`+error on exception
+
+**Files edited:**
+- `clipper/compose/stages/ingest.py` — Added race fix: if `status=='downloading'`, poll-wait 1s up to 180s rather than launching a second yt-dlp. Added explicit handling for `local`/`image` kinds (probe duration + set ready). Idempotency now also covers `status=='normalized'`.
+
+---
+
+### Step 3.7 — Multi-segment concat + black-frame pad ✅
+
+**Files created:**
+- `clipper/compose/stages/concat.py` — `run(normalized_paths, transitions, out_path)`: all-cut chains use concat demuxer (lossless/fast); mixed/non-cut chains use filter_complex with pairwise `xfade`+`acrossfade` reductions; offsets computed cumulatively per plan recipe R3
+- `clipper/compose/stages/pad.py` — `make_black_padding(duration, out_path)`: 1080×1920 black + silent stereo mp4 per plan recipe R5
+
+---
+
+### Step 3.8 — Compose render executor + orchestrator ✅
+
+**Files created:**
+- `clipper/compose/render.py` — `_run_render(comp_id)`: loads comp+segments, runs ingest+normalize per segment, builds transition specs from segment rows, calls concat, pads if total < target_sec, writes `last_render.mp4`, sets status='rendered' with duration; on any exception sets status='failed'+error
+
+**Files edited:**
+- `clipper/compose/runner.py` — Added `_compose_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="compose-render")`; added `_compose_loop()` daemon (polls every 2s for `status='render_queued'`, dispatches to executor); expanded `start()` to spawn the daemon thread
+
+---
+
+### Step 3.9 — Render preview button + polling + center-pane player ✅
+
+**Files edited:**
+- `dashboard/main.py` — Added `POST /api/compositions/{comp_id}/render` (validates ≥1 non-failed segment, sets status='render_queued'); added `GET /compositions/{comp_id}/render` (serves `last_render.mp4` via FileResponse, mirrors `/video/{cand_id}`)
+- `dashboard/static/app-compose-editor.js`:
+  - Added `_renderPoll` global and `_RENDER_ACTIVE` constant
+  - "Render preview" button in editor header; disabled when 0 segments; disabled+labeled "Rendering…" while render is in flight
+  - `setupCERenderBtn(compId, comp)` — wires click → POST render endpoint → starts `_startRenderPoll`
+  - `_startRenderPoll(compId)` — 2.5s recursive poll; updates status pill; on rendered→`_showCenterVideo`; on failed→`_showCenterError`; re-enables button in both terminal states
+  - `_showCenterVideo(compId)` — swaps center pane to `<video>` with cache-busting `?t=` param
+  - `_showCenterError(msg)` — renders error details in center pane
+  - `showComposeEditor`: restored video player on page reload if status=rendered; resumed render poll if status=render_queued/rendering
+
+**Acceptance test (Phase C MILESTONE):**
+Add one YouTube segment with trim → wait for download (progress bar) → click Render preview → status pill cycles render_queued→rendering→rendered → 9:16 video plays in center pane. Reload page → video still plays.
