@@ -1854,8 +1854,9 @@ hr { border: none; border-top: 1px solid var(--border); margin: 14px 0; }
   padding: 20px 0;
 }
 
+/* keep old placeholder style for the brief moment before timeline renders */
 .compose-timeline-placeholder {
-  height: 200px;
+  height: 160px;
   flex-shrink: 0;
   border-top: 1px solid var(--border);
   display: flex;
@@ -1865,6 +1866,354 @@ hr { border: none; border-top: 1px solid var(--border); margin: 14px 0; }
   font-size: 12px;
   background: var(--surface-alt);
 }
+
+/* ── Compose timeline strip (Phase D: Steps 3.10–3.12) ───────────────────── */
+
+.ce-timeline {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+}
+
+.ce-tl-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  height: 34px;
+}
+
+.ce-tl-title {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text);
+}
+
+.ce-tl-info {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-dim);
+}
+
+.ce-tl-hint {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-dim);
+}
+
+.ce-tl-sep {
+  width: 1px;
+  height: 14px;
+  background: var(--border);
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+
+.ce-tl-zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.ce-tl-zoom-label {
+  padding: 0 6px;
+  min-width: 50px;
+  text-align: center;
+  font-size: 9px;
+}
+
+.ce-tl-zoom button {
+  padding: 2px 7px;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.ce-tl-zoom button:hover { background: var(--surface-hover); color: var(--text); }
+
+.ce-tl-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex: 1;
+  min-height: 0;
+}
+
+.ce-tl-inner { position: relative; min-width: 100%; }
+
+/* Ruler */
+.ce-tl-ruler {
+  height: 22px;
+  position: relative;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  flex-shrink: 0;
+}
+
+.ce-tl-tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: flex-end;
+}
+
+.ce-tl-tick::before {
+  content: '';
+  display: block;
+  width: 1px;
+  height: 5px;
+  background: var(--border-strong);
+}
+
+.ce-tl-tick.big::before { height: 10px; background: var(--text-muted); }
+
+.ce-tl-tick.big span {
+  position: absolute;
+  bottom: 12px;
+  left: 4px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* Tracks */
+.ce-tl-tracks { position: relative; user-select: none; }
+
+.ce-tl-track {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--border);
+}
+
+.ce-tl-lbl {
+  width: 80px;
+  flex-shrink: 0;
+  padding: 0 8px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  border-right: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  line-height: 1.2;
+}
+
+.ce-tl-lbl small {
+  font-size: 8px;
+  color: var(--text-dim);
+  text-transform: none;
+  letter-spacing: 0;
+  margin-top: 1px;
+  font-weight: 400;
+}
+
+.ce-tl-content { flex: 1; position: relative; overflow: hidden; }
+
+/* Playhead */
+.ce-tl-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--accent);
+  pointer-events: none;
+  z-index: 20;
+}
+
+/* Hover capture zone (transparent, above tracks) */
+.ce-tl-hover-zone {
+  position: absolute;
+  left: 80px;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 15;
+  cursor: crosshair;
+}
+
+/* Segment blocks */
+.ce-tl-seg-block {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  border-radius: 4px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding: 3px 5px;
+  color: #fff;
+  cursor: grab;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+  transition: opacity 0.12s;
+}
+
+.ce-tl-seg-block.dragging { opacity: 0.4; cursor: grabbing; }
+
+.ce-tl-seg-block-kind {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  opacity: 0.8;
+}
+
+.ce-tl-seg-block-label {
+  font-size: 9px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 1px;
+  line-height: 1.2;
+}
+
+.ce-tl-seg-block-dur {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  opacity: 0.7;
+  margin-top: auto;
+}
+
+/* Transition amber shimmer */
+.ce-tl-trans-mark {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 14px;
+  pointer-events: none;
+  z-index: 3;
+  background: linear-gradient(90deg, transparent, rgba(215,186,125,0.5), transparent);
+}
+
+/* Drag-drop indicator bar */
+.ce-tl-drop-ind {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  width: 3px;
+  background: var(--text);
+  border-radius: 2px;
+  z-index: 25;
+  pointer-events: none;
+}
+
+/* Hook bar */
+.ce-tl-hook-bar {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  border-radius: 3px;
+  background: var(--amber);
+  display: flex;
+  align-items: center;
+  padding: 0 5px;
+  font-family: var(--font-mono);
+  font-size: 8px;
+  font-weight: 600;
+  color: #fff;
+  letter-spacing: 0.04em;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* SFX dots */
+.ce-tl-sfx-dot {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  pointer-events: none;
+}
+
+.ce-tl-sfx-num {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--green);
+  border: 2px solid var(--green-soft);
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 8px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.ce-tl-sfx-name {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* Hover thumbnail popup (position:fixed set dynamically in JS) */
+.ce-tl-thumb-pop {
+  flex-direction: column;
+  align-items: center;
+  pointer-events: none;
+  gap: 3px;
+}
+
+.ce-tl-thumb-img {
+  width: 50px;
+  height: 88px;
+  object-fit: cover;
+  border-radius: 4px;
+  background: #111;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.4), 0 0 0 2px var(--text);
+}
+
+.ce-tl-timecode {
+  padding: 2px 6px;
+  background: var(--text);
+  color: var(--bg);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+/* Stale-render banner */
+.ce-stale-banner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 16px;
+  background: rgba(215,186,125,0.08);
+  border-bottom: 1px solid var(--amber);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--amber);
+  flex-shrink: 0;
+}
+
+.ce-stale-banner a { color: var(--amber); text-decoration: underline; cursor: pointer; }
 
 /* ── Compose editor left col ─────────────────────────────────────────────── */
 

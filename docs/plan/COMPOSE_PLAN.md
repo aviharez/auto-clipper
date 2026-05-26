@@ -756,7 +756,7 @@ unified rows with a `pipeline` field.
 
 ### Phase D — Timeline view (target layout)
 
-- [ ] **Step 3.10 — Read-only timeline strip**
+- [x] **Step 3.10 — Read-only timeline strip**
 
   **Deliverables:**
   - Replace the Phase B "Timeline (TBD)" placeholder with the real strip. 5 stacked
@@ -775,7 +775,7 @@ unified rows with a `pipeline` field.
   **Acceptance test:** Add 3 segments of different kinds + durations → timeline strip
   shows 3 proportional colored blocks. Zoom in/out works.
 
-- [ ] **Step 3.11 — Thumbnail extraction + hover-scrub**
+- [x] **Step 3.11 — Thumbnail extraction + hover-scrub**
 
   **Deliverables:**
   - `clipper/compose/stages/thumbs.py`:
@@ -791,7 +791,7 @@ unified rows with a `pipeline` field.
   **Acceptance test:** After a render, hover anywhere on the timeline → vertical line +
   thumbnail appears + center pane jumps to the same frame.
 
-- [ ] **Step 3.12 — Drag-to-reorder segments on timeline**
+- [x] **Step 3.12 — Drag-to-reorder segments on timeline**
 
   **Deliverables:**
   - Make segment blocks `draggable=true`. On drag: lift block (translateY + shadow per

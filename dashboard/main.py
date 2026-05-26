@@ -819,3 +819,37 @@ def serve_composition_render(comp_id: str):
     if not path.exists():
         raise HTTPException(404, "Render file not found on disk")
     return FileResponse(str(path), media_type="video/mp4", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/api/compositions/{comp_id}/voiceover/peaks")
+def api_voiceover_peaks(comp_id: str):
+    comp = compose_db.get_composition(comp_id)
+    if not comp:
+        raise HTTPException(404, "Composition not found")
+    vo_path = Path("data") / "compositions" / comp_id / "voiceover.wav"
+    if not vo_path.exists():
+        return {"peaks": [], "duration_sec": 0}
+    # Full waveform analysis comes in Step 3.15; return duration-only stub
+    try:
+        import subprocess as _sp
+        r = _sp.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=nw=1:nk=1", str(vo_path)],
+            capture_output=True, text=True,
+        )
+        dur = float(r.stdout.strip()) if r.returncode == 0 else 0.0
+    except Exception:
+        dur = 0.0
+    return {"peaks": [], "duration_sec": dur}
+
+
+@app.get("/compositions/{comp_id}/thumb/{n}")
+def serve_composition_thumb(comp_id: str, n: int):
+    comp = compose_db.get_composition(comp_id)
+    if not comp:
+        raise HTTPException(404, "Composition not found")
+    thumb_path = Path("data") / "compositions" / comp_id / "thumbs" / f"{n}.jpg"
+    if not thumb_path.exists():
+        raise HTTPException(404, "Thumbnail not found")
+    return FileResponse(str(thumb_path), media_type="image/jpeg",
+                        headers={"Cache-Control": "public, max-age=3600"})

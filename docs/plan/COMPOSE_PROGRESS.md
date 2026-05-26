@@ -276,3 +276,46 @@ Add one YouTube segment with trim → wait for download (progress bar) → click
 **Root cause:** `render.py:_run_render` only padded with black frames when `concat_dur < target_sec - 0.1`. When the segment (un-trimmed YouTube video) was *longer* than the target, it passed through unchanged. The pad/trim step had no upper-bound enforcement.
 
 **Fix:** `clipper/compose/render.py` — added an `elif concat_dur > target_sec + 0.1` branch that calls the new `_trim_to_duration(src, duration, out_path)` helper. The helper uses `ffmpeg -t <target_sec> -c copy` (stream-copy, keyframe-aligned) to cut the concatenated picture at the target length. For a preview render this precision is sufficient; exact-frame trimming is handled by setting `trim_in`/`trim_out` on individual segments before the final render.
+
+---
+
+## Phase D — Timeline view (COMPLETED 2026-05-26)
+
+### Step 3.10 — Read-only timeline strip ✅
+
+**Files edited:**
+- `dashboard/static/style.css` — replaced `.compose-timeline-placeholder` with full timeline CSS: `.ce-timeline`, `.ce-tl-header`, `.ce-tl-ruler`, `.ce-tl-tick`, `.ce-tl-tracks`, `.ce-tl-lbl`, `.ce-tl-content`, `.ce-tl-playhead`, `.ce-tl-hover-zone`, `.ce-tl-seg-block`, `.ce-tl-trans-mark`, `.ce-tl-hook-bar`, `.ce-tl-sfx-dot`, `.ce-stale-banner` and related helpers
+- `dashboard/main.py` — added `GET /api/compositions/{comp_id}/voiceover/peaks` stub (returns empty peaks + ffprobe duration; full waveform analysis deferred to Step 3.15)
+- `dashboard/static/app-compose-editor.js`:
+  - Added `renderCETimeline(comp, peaks)` — replaces placeholder div or existing `#ce-timeline` with the rendered strip; reuses existing zoom level on re-render
+  - Added `_ceTLBuildHTML`, `_ceTLRulerHTML`, `_ceTLSegsHTML`, `_ceTLHookHTML`, `_ceTLVoiceHTML`, `_ceTLVoiceContentHTML`, `_ceTLMusicHTML`, `_ceTLSFXHTML` — pure HTML generators
+  - Added `_ceTLZoom(action)` — fit / −1 / +1 zoom; clamps to [3, 160] px/s; calls `renderCETimeline`
+  - Added `_ceTLLoadPeaks(comp)` — async; fetches `/voiceover/peaks` and patches the voice track DOM without full re-render
+  - Called `renderCETimeline(comp)` from `showComposeEditor` after the rest of the setup
+
+**Timeline layout:** 5 stacked tracks (Segs 56px, Hook 22px, Voice 30px, Music 24px, SFX 26px) beneath a 22px ruler with 1s ticks and 5s labels. Above all: 34px header with title, segment/duration info, hover/drag hints, and zoom controls (fit / − / +). Total height ≈ 190px.
+
+**Acceptance test:** 3 segments of different kinds → timeline shows 3 proportional colored blocks in the Segs track. Hook text set → amber bar appears. SFX drop added → green numbered dot appears. Zoom in/out works (fit restores original scale).
+
+---
+
+### Step 3.11 — Thumbnail extraction + hover-scrub ✅
+
+**Files created:**
+- `clipper/compose/stages/thumbs.py` — `extract_thumbs(video_path, out_dir, every_sec=0.5)`: runs `ffmpeg -vf fps=2,scale=50:-2 -q:v 5 thumbs/%d.jpg`; non-fatal if it fails (render completes regardless)
+
+**Files edited:**
+- `clipper/compose/render.py` — added `from clipper.compose.stages import thumbs as compose_thumbs`; after writing `last_render.mp4`, calls `compose_thumbs.extract_thumbs(last_render_path, thumbs_dir)` in a try/except so thumb failure never aborts the render
+- `dashboard/main.py` — added `GET /compositions/{comp_id}/thumb/{n}` endpoint serving `data/compositions/{id}/thumbs/{n}.jpg` with 1h cache headers
+- `dashboard/static/app-compose-editor.js` — `_ceTLSetupHover(comp)`: on `mousemove` over `#ce-tl-hover-zone`, moves playhead, updates `#ce-tl-thumb-img src` (frame `round(t*2)`), sets timecode badge, and seeks `#ce-preview-video.currentTime = t`. Thumb popup uses `position:fixed` to escape the timeline's `overflow:hidden`. Hides on `mouseleave`.
+
+---
+
+### Step 3.12 — Drag-to-reorder segments on timeline ✅
+
+**Files edited:**
+- `dashboard/static/app-compose-editor.js` — `_ceTLSetupDrag(segs, comp)`: wires HTML5 drag events on `.ce-tl-seg-block` elements. `dragover` shows `.ce-tl-drop-ind` vertical bar at the insertion point. `drop` computes new order for all `comp.segments` (preserving non-shown segments), calls `PUT /api/compositions/{id}/segments/order`, re-fetches comp, calls `renderCESegments` + `renderCETimeline`, shows `_ceTLShowStaleBanner()` if a render exists.
+- `_ceTLShowStaleBanner()` — inserts `#ce-stale-banner` div after the editor header with amber text + "re-render to update" link
+- `_ceReRender(e)` — removes the banner and clicks `#ce-render-btn`
+
+**Acceptance test:** 3 segments → drag segment 1 between 2 and 3 → drop → left rail list and timeline both reflect new order → `PUT /segments/order` was called → click "re-render to update" → render restarts.

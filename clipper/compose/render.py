@@ -9,6 +9,7 @@ from clipper.compose.stages import ingest as compose_ingest
 from clipper.compose.stages import normalize as compose_normalize
 from clipper.compose.stages import concat as compose_concat
 from clipper.compose.stages import pad as compose_pad
+from clipper.compose.stages import thumbs as compose_thumbs
 
 log = logging.getLogger(__name__)
 
@@ -113,6 +114,15 @@ def _run_render(comp_id: str) -> None:
         shutil.copy2(picture_path, last_render_path)
 
         final_dur = _probe_duration(last_render_path)
+
+        # Extract hover-scrub thumbnails (non-fatal if ffmpeg struggles)
+        try:
+            thumbs_dir = str(comp_dir / "thumbs")
+            compose_thumbs.extract_thumbs(last_render_path, thumbs_dir)
+            log.info("Render %s: thumbnails extracted", comp_id)
+        except Exception:
+            log.warning("Render %s: thumb extraction failed (non-fatal)", comp_id, exc_info=True)
+
         compose_db.update_composition(
             comp_id,
             status="rendered",

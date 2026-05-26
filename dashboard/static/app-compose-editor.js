@@ -90,6 +90,7 @@ async function showComposeEditor(compId) {
   renderCERightRail(comp);
   setupCEAddSegment(compId);
   setupCERenderBtn(compId, comp);
+  renderCETimeline(comp);
 
   // 3.5b: start polling if any segment is downloading
   if ((comp.segments || []).some(s => s.status === 'downloading')) {
@@ -773,4 +774,360 @@ function attachCERightRailHandlers(comp) {
       } catch (e) { toast('Error: ' + e.message, 'error'); }
     };
   }
+}
+
+// ── Timeline (Phase D: Steps 3.10 – 3.12) ────────────────────────────────
+
+let _tl = null; // { pxPerSec, totalDur, comp, peaks }
+
+// Entry point: called from showComposeEditor and on any re-render.
+// Also called from _ceTLZoom — reuses existing _tl.pxPerSec.
+function renderCETimeline(comp, peaks) {
+  const target = document.querySelector('.compose-timeline-placeholder') ||
+                 document.getElementById('ce-timeline');
+  if (!target) return;
+
+  const totalDur = comp.last_render_duration || comp.target_sec || 38;
+  const segs = (comp.segments || []).filter(s => _tlSegDur(s) > 0 && s.status !== 'failed');
+
+  // Keep previous zoom level across re-renders; fit on first render
+  const pxPerSec = (_tl && _tl.pxPerSec) ? _tl.pxPerSec : _ceTLFitPxPerSec(target, totalDur);
+  _tl = { pxPerSec, totalDur, comp, peaks: peaks || [] };
+
+  target.outerHTML = _ceTLBuildHTML(comp, peaks || [], segs, totalDur, pxPerSec);
+
+  // Async-load voiceover peaks if not supplied
+  if (!peaks || !peaks.length) _ceTLLoadPeaks(comp);
+  _ceTLSetupHover(comp);
+  _ceTLSetupDrag(segs, comp);
+}
+
+function _ceTLFitPxPerSec(containerEl, totalDur) {
+  const w = (containerEl ? containerEl.offsetWidth : 900) - 80 - 24;
+  return Math.max(4, Math.min(80, w / totalDur));
+}
+
+function _tlSegDur(seg) {
+  if (seg.duration != null) return parseFloat(seg.duration);
+  if (seg.trim_out != null) return Math.max(0, parseFloat(seg.trim_out) - parseFloat(seg.trim_in || 0));
+  return 0;
+}
+
+function _ceTLZoom(action) {
+  if (!_tl) return;
+  if (action === 'fit') {
+    const scroll = document.getElementById('ce-tl-scroll');
+    const w = scroll ? Math.max(100, scroll.clientWidth - 80 - 16) : 400;
+    _tl.pxPerSec = w / _tl.totalDur;
+  } else {
+    _tl.pxPerSec = action > 0
+      ? Math.min(160, _tl.pxPerSec * 1.5)
+      : Math.max(3, _tl.pxPerSec / 1.5);
+  }
+  renderCETimeline(_tl.comp, _tl.peaks);
+}
+
+async function _ceTLLoadPeaks(comp) {
+  try {
+    const data = await api('GET', '/compositions/' + comp.id + '/voiceover/peaks');
+    if (_tl && data.peaks && data.peaks.length > 0) {
+      _tl.peaks = data.peaks;
+      const el = document.getElementById('ce-tl-voice');
+      if (el) el.innerHTML = _ceTLVoiceContentHTML(data.peaks, _tl.totalDur, _tl.pxPerSec, comp.voice_ranges || []);
+    }
+  } catch (_) {}
+}
+
+// ── HTML builders ──────────────────────────────────────────────────────────
+
+function _ceTLBuildHTML(comp, peaks, segs, totalDur, pxPerSec) {
+  const contentW = Math.max(200, totalDur * pxPerSec);
+  const innerW = contentW + 80 + 24;
+  const segInfo = `${segs.length} seg${segs.length !== 1 ? 's' : ''} · ${totalDur.toFixed(1)}s`;
+
+  return `
+<div class="ce-timeline" id="ce-timeline">
+  <div class="ce-tl-header">
+    <span class="ce-tl-title">Timeline</span>
+    <span class="ce-tl-info">${segInfo}</span>
+    <div style="flex:1"></div>
+    <span class="ce-tl-hint"><span style="color:var(--accent)">↔</span> hover · <span style="color:var(--accent)">⇆</span> drag to reorder</span>
+    <div class="ce-tl-sep"></div>
+    <div class="ce-tl-zoom">
+      <button onclick="_ceTLZoom('fit')">fit</button>
+      <span class="ce-tl-zoom-label" id="ce-tl-zoom-label">${Math.round(pxPerSec)} px/s</span>
+      <button onclick="_ceTLZoom(-1)">−</button>
+      <button onclick="_ceTLZoom(1)">+</button>
+    </div>
+  </div>
+  <div class="ce-tl-scroll" id="ce-tl-scroll">
+    <div class="ce-tl-inner" id="ce-tl-inner" style="width:${innerW.toFixed(0)}px">
+      ${_ceTLRulerHTML(totalDur, pxPerSec)}
+      <div class="ce-tl-tracks" id="ce-tl-tracks">
+        <div class="ce-tl-playhead" id="ce-tl-playhead" style="display:none"></div>
+        <div class="ce-tl-hover-zone" id="ce-tl-hover-zone"></div>
+        ${_ceTLSegsHTML(segs, comp, pxPerSec)}
+        ${_ceTLHookHTML(comp, pxPerSec)}
+        ${_ceTLVoiceHTML(peaks, totalDur, pxPerSec, comp.voice_ranges || [])}
+        ${_ceTLMusicHTML(totalDur, pxPerSec)}
+        ${_ceTLSFXHTML(comp.sfx || [], totalDur, pxPerSec)}
+      </div>
+    </div>
+  </div>
+  <div class="ce-tl-thumb-pop" id="ce-tl-thumb-pop" style="display:none">
+    <img class="ce-tl-thumb-img" id="ce-tl-thumb-img" src="" alt="" />
+    <div class="ce-tl-timecode" id="ce-tl-timecode"></div>
+  </div>
+</div>`;
+}
+
+function _ceTLRulerHTML(totalDur, pxPerSec) {
+  let ticks = '';
+  for (let t = 0; t <= Math.ceil(totalDur) + 1; t++) {
+    const isBig = t % 5 === 0;
+    const left = (80 + t * pxPerSec).toFixed(1);
+    ticks += `<div class="ce-tl-tick${isBig ? ' big' : ''}" style="left:${left}px">${isBig ? `<span>${t}s</span>` : ''}</div>`;
+  }
+  return `<div class="ce-tl-ruler" id="ce-tl-ruler">${ticks}</div>`;
+}
+
+function _ceTLSegsHTML(segs, comp, pxPerSec) {
+  let cumulPx = 0;
+  let blocks = '';
+  let tranMarks = '';
+
+  for (let i = 0; i < segs.length; i++) {
+    const seg = segs[i];
+    const dur = _tlSegDur(seg);
+    const x = cumulPx;
+    const w = Math.max(2, dur * pxPerSec - 2);
+    const color = KIND_COLORS[seg.kind] || '#888';
+    const kindLbl = KIND_LABELS[seg.kind] || seg.kind;
+    const rawLabel = seg.label || (seg.source_url ? seg.source_url.slice(0, 22) : `Seg ${i + 1}`);
+    const dispLabel = rawLabel.length > 18 ? rawLabel.slice(0, 18) + '…' : rawLabel;
+
+    blocks += `<div class="ce-tl-seg-block" draggable="true"
+      data-tl-seg-id="${seg.id}" data-tl-seg-i="${i}"
+      style="left:${x.toFixed(1)}px;width:${w.toFixed(1)}px;background:${color}">
+      <div class="ce-tl-seg-block-kind">${kindLbl}</div>
+      <div class="ce-tl-seg-block-label">${escHtml(dispLabel)}</div>
+      <div class="ce-tl-seg-block-dur">${dur.toFixed(1)}s</div>
+    </div>`;
+
+    cumulPx += dur * pxPerSec;
+
+    if (i < segs.length - 1 && seg.transition_to_next && seg.transition_to_next !== 'cut') {
+      tranMarks += `<div class="ce-tl-trans-mark" style="left:${(cumulPx - 7).toFixed(1)}px"></div>`;
+    }
+  }
+
+  return `
+<div class="ce-tl-track" style="height:56px;background:var(--bg)">
+  <div class="ce-tl-lbl">Segs<small>drag to reorder</small></div>
+  <div class="ce-tl-content" id="ce-tl-segs">
+    ${blocks}${tranMarks}
+    <div class="ce-tl-drop-ind" id="ce-tl-drop-ind" style="display:none"></div>
+  </div>
+</div>`;
+}
+
+function _ceTLHookHTML(comp, pxPerSec) {
+  const hookW = comp.hook_text ? (1.5 * pxPerSec) : 0;
+  const hookBar = hookW > 0
+    ? `<div class="ce-tl-hook-bar" style="left:0;width:${hookW.toFixed(1)}px">HOOK · 1.5s</div>`
+    : '';
+  return `
+<div class="ce-tl-track" style="height:22px">
+  <div class="ce-tl-lbl">Hook</div>
+  <div class="ce-tl-content">${hookBar}</div>
+</div>`;
+}
+
+function _ceTLVoiceContentHTML(peaks, totalDur, pxPerSec, voiceRanges) {
+  const contentW = Math.max(1, totalDur * pxPerSec);
+  const trackH = 30;
+  let svg = '';
+  if (peaks && peaks.length > 0) {
+    const rects = peaks.map((p, i) => {
+      const h = Math.max(1, p * (trackH - 4));
+      const x = (i / peaks.length) * contentW;
+      return `<rect x="${x.toFixed(1)}" y="${((trackH - h) / 2).toFixed(1)}" width="1.5" height="${h.toFixed(1)}" fill="var(--accent)" opacity="0.5"/>`;
+    }).join('');
+    svg = `<svg width="${contentW.toFixed(0)}" height="${trackH}" preserveAspectRatio="none" style="position:absolute;inset:0;pointer-events:none">${rects}</svg>`;
+  }
+  const rangeLines = (voiceRanges || []).filter((_, i) => i > 0).map(r => {
+    const x = (r.start_sec / totalDur) * contentW;
+    return `<div style="position:absolute;left:${x.toFixed(1)}px;top:0;bottom:0;border-left:1.5px dashed var(--accent);pointer-events:none"></div>`;
+  }).join('');
+  return svg + rangeLines;
+}
+
+function _ceTLVoiceHTML(peaks, totalDur, pxPerSec, voiceRanges) {
+  return `
+<div class="ce-tl-track" style="height:30px">
+  <div class="ce-tl-lbl">Voice<small>from wav</small></div>
+  <div class="ce-tl-content" id="ce-tl-voice">${_ceTLVoiceContentHTML(peaks, totalDur, pxPerSec, voiceRanges)}</div>
+</div>`;
+}
+
+function _ceTLMusicHTML(totalDur, pxPerSec) {
+  // Waveform data comes in Step 3.21 when music library is bundled
+  return `
+<div class="ce-tl-track" style="height:24px">
+  <div class="ce-tl-lbl">Music</div>
+  <div class="ce-tl-content" id="ce-tl-music"></div>
+</div>`;
+}
+
+function _ceTLSFXHTML(sfxDrops, totalDur, pxPerSec) {
+  const contentW = Math.max(1, totalDur * pxPerSec);
+  const dots = sfxDrops.map((s, i) => {
+    const x = Math.min(contentW - 7, Math.max(0, s.at_sec * pxPerSec));
+    const name = s.file ? s.file.split(/[\\/]/).pop().replace(/\.\w+$/, '') : '';
+    return `<div class="ce-tl-sfx-dot" style="left:${x.toFixed(1)}px">
+      <div class="ce-tl-sfx-num">${i + 1}</div>
+      ${name ? `<span class="ce-tl-sfx-name">${escHtml(name)}</span>` : ''}
+    </div>`;
+  }).join('');
+  return `
+<div class="ce-tl-track" style="height:26px">
+  <div class="ce-tl-lbl">SFX</div>
+  <div class="ce-tl-content" id="ce-tl-sfx">${dots}</div>
+</div>`;
+}
+
+// ── Step 3.11: Hover-scrub ────────────────────────────────────────────────
+
+function _ceTLSetupHover(comp) {
+  const hoverZone = document.getElementById('ce-tl-hover-zone');
+  const playhead  = document.getElementById('ce-tl-playhead');
+  if (!hoverZone || !playhead) return;
+
+  hoverZone.addEventListener('mousemove', (e) => {
+    if (!_tl) return;
+    const x = e.offsetX;
+    const t = Math.max(0, Math.min(_tl.totalDur, x / _tl.pxPerSec));
+
+    // Move playhead inside the tracks (offset from left edge of tracks div)
+    playhead.style.display = '';
+    playhead.style.left = (80 + x) + 'px';
+
+    // Show thumbnail + update video only when a render exists
+    if (comp.last_render_duration) {
+      const n = Math.max(1, Math.round(t * 2)); // 0.5s intervals
+      const img     = document.getElementById('ce-tl-thumb-img');
+      const tc      = document.getElementById('ce-tl-timecode');
+      const thumbPop = document.getElementById('ce-tl-thumb-pop');
+
+      if (img) img.src = `/compositions/${comp.id}/thumb/${n}`;
+      if (tc)  tc.textContent = t.toFixed(1) + 's';
+
+      if (thumbPop) {
+        // Use fixed positioning to escape the overflow:hidden timeline container
+        const scroll = document.getElementById('ce-tl-scroll');
+        const scrollTop = scroll ? scroll.getBoundingClientRect().top : 0;
+        thumbPop.style.display = 'flex';
+        thumbPop.style.position = 'fixed';
+        thumbPop.style.left = e.clientX + 'px';
+        thumbPop.style.top  = (scrollTop - 106) + 'px';
+        thumbPop.style.transform = 'translateX(-50%)';
+        thumbPop.style.zIndex = '999';
+      }
+
+      // Seek the center-pane video to the hovered time (if not paused)
+      const video = document.getElementById('ce-preview-video');
+      if (video && video.readyState >= 1) video.currentTime = t;
+    }
+  });
+
+  hoverZone.addEventListener('mouseleave', () => {
+    playhead.style.display = 'none';
+    const thumbPop = document.getElementById('ce-tl-thumb-pop');
+    if (thumbPop) thumbPop.style.display = 'none';
+  });
+}
+
+// ── Step 3.12: Drag-to-reorder segment blocks ─────────────────────────────
+
+function _ceTLSetupDrag(segs, comp) {
+  let dragSrcId = null;
+
+  document.querySelectorAll('.ce-tl-seg-block').forEach(el => {
+    el.addEventListener('dragstart', (e) => {
+      dragSrcId = el.dataset.tlSegId;
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', dragSrcId);
+      // Defer class add so browser captures the un-dimmed image as drag ghost
+      setTimeout(() => el.classList.add('dragging'), 0);
+    });
+
+    el.addEventListener('dragend', () => {
+      el.classList.remove('dragging');
+      const ind = document.getElementById('ce-tl-drop-ind');
+      if (ind) ind.style.display = 'none';
+      dragSrcId = null;
+    });
+
+    el.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      if (!dragSrcId || el.dataset.tlSegId === dragSrcId) return;
+      const rect = el.getBoundingClientRect();
+      const insertAfter = e.clientX > rect.left + rect.width / 2;
+      const ind = document.getElementById('ce-tl-drop-ind');
+      const content = document.getElementById('ce-tl-segs');
+      if (ind && content) {
+        const cr = content.getBoundingClientRect();
+        const indX = (insertAfter ? rect.right : rect.left) - cr.left;
+        ind.style.left = indX + 'px';
+        ind.style.display = '';
+      }
+    });
+
+    el.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      const ind = document.getElementById('ce-tl-drop-ind');
+      if (ind) ind.style.display = 'none';
+      const targetId = el.dataset.tlSegId;
+      if (!dragSrcId || targetId === dragSrcId) { dragSrcId = null; return; }
+
+      // Build new order: all segment IDs (including non-shown ones) with src moved
+      const allIds = (comp.segments || []).map(s => s.id);
+      const without = allIds.filter(id => id !== dragSrcId);
+      const tgtIdx = without.indexOf(targetId);
+      const insertAfter = e.clientX > el.getBoundingClientRect().left + el.getBoundingClientRect().width / 2;
+      without.splice(insertAfter ? tgtIdx + 1 : tgtIdx, 0, dragSrcId);
+      dragSrcId = null;
+
+      try {
+        await api('PUT', '/compositions/' + comp.id + '/segments/order', { order: without });
+        const updComp = await api('GET', '/compositions/' + comp.id);
+        renderCESegments(updComp.segments || []);
+        renderCETimeline(updComp, _tl ? _tl.peaks : []);
+        if (updComp.last_render_path) _ceTLShowStaleBanner();
+      } catch (ex) {
+        toast('Reorder failed: ' + ex.message, 'error');
+      }
+    });
+  });
+}
+
+function _ceTLShowStaleBanner() {
+  if (document.getElementById('ce-stale-banner')) return;
+  const editorEl = document.querySelector('.compose-editor');
+  if (!editorEl) return;
+  const div = document.createElement('div');
+  div.id = 'ce-stale-banner';
+  div.className = 'ce-stale-banner';
+  div.innerHTML = `⚠ Segment order changed — <a href="#" onclick="_ceReRender(event)">re-render to update</a>`;
+  const header = editorEl.querySelector('.compose-editor-header');
+  if (header) header.insertAdjacentElement('afterend', div);
+  else editorEl.prepend(div);
+}
+
+function _ceReRender(e) {
+  e.preventDefault();
+  const b = document.getElementById('ce-stale-banner');
+  if (b) b.remove();
+  document.getElementById('ce-render-btn')?.click();
 }
