@@ -881,7 +881,7 @@ unified rows with a `pipeline` field.
   **Acceptance test:** Render with mode=script and a 1-sentence script → captions
   appear and are word-aligned to the voiceover.
 
-- [ ] **Step 3.17 — Hook prepend**
+- [x] **Step 3.17 — Hook prepend**
 
   **Deliverables:**
   - `clipper/compose/stages/hook.py`:
@@ -898,7 +898,7 @@ unified rows with a `pipeline` field.
   **Acceptance test:** Set hook_text → render → first ~1.5s shows the hook overlay, then
   the composition body plays.
 
-- [ ] **Step 3.18 — Two-stage audio mix**
+- [x] **Step 3.18 — Two-stage audio mix**
 
   **Deliverables:**
   - `clipper/compose/stages/audio.py`:
@@ -914,7 +914,7 @@ unified rows with a `pipeline` field.
   **Acceptance test:** Render with a voiceover + bed music + 1 SFX placed at 2s → audio
   plays: bed ducks under voice, SFX plays at 2s without dipping anything.
 
-- [ ] **Step 3.19 — Final render orchestrator wiring**
+- [x] **Step 3.19 — Final render orchestrator wiring**
 
   **Deliverables:** Update `clipper/compose/render.py:_run_render` to call the full
   sequence:

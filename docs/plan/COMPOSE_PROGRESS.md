@@ -400,3 +400,51 @@ Add one YouTube segment with trim → wait for download (progress bar) → click
 - `clipper/compose/render.py` — added `from clipper.compose.stages import caption as compose_caption`; inserted caption burn step (Step 4b) between picture assembly and `last_render.mp4` copy. Output is `picture_captioned.mp4`; this becomes the new `picture_path` fed to the copy step.
 
 **Acceptance test:** Set `captions_mode='script'`, enter a 1-sentence script in Captions panel, generate or upload a voiceover → click Render preview → rendered video plays with captions burned at the correct positions, word-aligned to voiceover timing.
+
+---
+
+### Step 3.17 — Hook prepend ✅
+
+**Files created:**
+- `clipper/compose/stages/hook.py` — `run(comp, picture_path, out_path) -> float`:
+  - Returns `hook_duration` (seconds) so the audio mix can prepend matching silence.
+  - Returns `0.0` and copies picture_path unchanged if `hook_text` is empty or `hook_animation == 'none'`.
+  - `_make_compose_hook(src, out, ...)` — blurred teaser: `trim + geq darkening + ass overlay`, 48k stereo anullsrc (not 44.1k like the Clip hook). Runs with `cwd=BASE_DIR` so the ASS relative path resolves correctly.
+  - `_concat_hook_body(hook, body, out, ...)` — mirrors `clipper/stages/hook.py:_concatenate` but adds explicit `aresample=48000` on both audio inputs before the concat/xfade to prevent sample-rate mismatch errors (hook emits 48k, body may differ after re-encode chain).
+  - `_TRANSITION_SPECS` mirrors the Clip stage (fade 0.125s, slide_up 0.30s) — cut is the fallback.
+
+**Files edited:**
+- `clipper/config.py:HOOK_PRESETS` — added `slide_in_top` (slide_up transition), `fade_in` (fade transition), `pop` (cut transition) — the three Compose-specific `hook_animation` dropdown values from Step 3.5. All share the same Montserrat Black font style.
+
+**Audio sync note:** `run()` returns the hook duration so `render.py` can pass it as `hook_offset` to the audio mix stage. The body audio (voice + bed + SFX) is then delayed by that amount so speech starts exactly when the composition body begins, not during the hook.
+
+---
+
+### Step 3.18 — Two-stage audio mix ✅
+
+**Files created:**
+- `clipper/compose/stages/audio.py` — `mix(comp, voice_ranges, body_duration, hook_offset, out_path) -> bool`:
+  - Returns `False` if no voiceover, no bed, no valid SFX — caller skips mux and copies the picture track unchanged.
+  - **Voice track** (`_build_voice_track`): sorts voice_ranges by start_sec; if empty, uses full voiceover.wav padded/trimmed to body_duration. If N ranges: `[0:a]asplit=N[a0]...[aN]` → per-range `atrim+asetpts` → `concat=n=N:v=0:a=1` → `apad+atrim` to body_duration. Output: `voice_track.wav`.
+  - **Stage 1** (`_stage1_duck` / `_trim_bed`): bed loops via `-stream_loop -1` then atrim. Duck=True: `sidechaincompress(threshold=0.05,ratio=8,attack=20,release=400)` compresses bed under voice, then `amix(normalize=0)` blends. Duck=False: plain `amix`. Bed-only: `_trim_bed`. Output: `mix1.wav`.
+  - **SFX-only base**: `_make_silence(duration)` generates anullsrc when no voice and no bed exist but SFX rows do.
+  - **Stage 2** (`_stage2_sfx`): each SFX: `adelay=at_ms|at_ms:all=1, volume=gain_db dB` → `amix(inputs=N+1, normalize=0)`. Output: `body_audio.wav`.
+  - **Hook offset** (`_prepend_silence`): if `hook_offset > 0.01`, uses `adelay=hook_ms|hook_ms:all=1` to push body audio forward so it starts after the hook segment. Output: `final_audio.wav`.
+  - `_resolve_abs_path`: accepts absolute paths (what music/sfx library endpoints store) or bare filenames (fallback search under assets/music/ and assets/sfx/).
+
+---
+
+### Step 3.19 — Final render orchestrator wiring ✅
+
+**Files edited:**
+- `clipper/compose/render.py`:
+  - Added imports for `compose_hook` and `compose_audio`.
+  - Added `_mux(picture_path, audio_path, out_path)` helper: `ffmpeg -map 0:v -map 1:a -c:v copy -c:a aac -b:a 192k -shortest`.
+  - `_run_render` extended after the caption burn step:
+    1. Probe `body_dur = _probe_duration(picture_captioned.mp4)` — captures body length BEFORE hook adds time.
+    2. `hook_offset = compose_hook.run(comp, captioned, hooked)` → `picture_hooked.mp4`.
+    3. `has_audio = compose_audio.mix(comp, voice_ranges, body_dur, hook_offset, final_audio.wav)`.
+    4. If `has_audio`: `_mux(picture_hooked, final_audio, last_render.mp4)`; else `shutil.copy2(picture_hooked, last_render.mp4)`.
+  - All intermediate files kept on disk (`concat_raw.mp4`, `picture.mp4`, `picture_captioned.mp4`, `picture_hooked.mp4`, `voice_track.wav`, `mix1.wav`, `body_audio.wav`, `final_audio.wav`).
+
+**Acceptance test:** 3 segments + Kokoro voiceover + bed music + 1 SFX at 2s + script captions + hook text → Render preview → final mp4 is target-length, hook plays first ~2s, captions sync, bed ducks under voice, SFX audible at ~4s (2s into body), black padding fills the tail if short.

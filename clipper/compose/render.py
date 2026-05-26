@@ -8,6 +8,8 @@ import clipper.compose.db as compose_db
 from clipper.compose.stages import ingest as compose_ingest
 from clipper.compose.stages import normalize as compose_normalize
 from clipper.compose.stages import caption as compose_caption
+from clipper.compose.stages import hook as compose_hook
+from clipper.compose.stages import audio as compose_audio
 from clipper.compose.stages import concat as compose_concat
 from clipper.compose.stages import pad as compose_pad
 from clipper.compose.stages import thumbs as compose_thumbs
@@ -36,6 +38,24 @@ def _probe_duration(path: str) -> float:
         capture_output=True, text=True,
     )
     return float(result.stdout.strip())
+
+
+def _mux(picture_path: str, audio_path: str, out_path: str) -> None:
+    """Replace picture audio track with the mixed audio, re-encode to AAC."""
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", picture_path,
+        "-i", audio_path,
+        "-map", "0:v",
+        "-map", "1:a",
+        "-c:v", "copy",
+        "-c:a", "aac", "-b:a", "192k",
+        "-shortest",
+        out_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"Mux failed:\n{result.stderr[-2000:]}")
 
 
 def _run_render(comp_id: str) -> None:
@@ -116,9 +136,31 @@ def _run_render(comp_id: str) -> None:
         compose_caption.run(comp, picture_path, captioned_path)
         picture_path = captioned_path
 
-        # Step 5: write last_render.mp4
+        # Probe body duration BEFORE hook is prepended (audio is sized to the body only)
+        body_dur = _probe_duration(picture_path)
+
+        # Step 4c: hook prepend
+        hooked_path = str(comp_dir / "picture_hooked.mp4")
+        log.info("Render %s: hook (hook_text=%r)", comp_id, (comp.get("hook_text") or "")[:40])
+        hook_offset = compose_hook.run(comp, picture_path, hooked_path)
+        picture_path = hooked_path
+
+        # Step 5a: audio mix → final_audio.wav
+        final_audio_path = str(comp_dir / "final_audio.wav")
+        voice_ranges = compose_db.get_voice_ranges(comp_id)
+        log.info(
+            "Render %s: audio mix (body_dur=%.2fs, hook_offset=%.2fs, voice_ranges=%d)",
+            comp_id, body_dur, hook_offset, len(voice_ranges),
+        )
+        has_audio = compose_audio.mix(comp, voice_ranges, body_dur, hook_offset, final_audio_path)
+
+        # Step 5b: mux picture + audio → last_render.mp4 (or copy when no audio)
         last_render_path = str(comp_dir / "last_render.mp4")
-        shutil.copy2(picture_path, last_render_path)
+        if has_audio:
+            log.info("Render %s: muxing picture + audio", comp_id)
+            _mux(picture_path, final_audio_path, last_render_path)
+        else:
+            shutil.copy2(picture_path, last_render_path)
 
         final_dur = _probe_duration(last_render_path)
 
