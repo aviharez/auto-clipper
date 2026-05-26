@@ -7,6 +7,7 @@ from pathlib import Path
 import clipper.compose.db as compose_db
 from clipper.compose.stages import ingest as compose_ingest
 from clipper.compose.stages import normalize as compose_normalize
+from clipper.compose.stages import caption as compose_caption
 from clipper.compose.stages import concat as compose_concat
 from clipper.compose.stages import pad as compose_pad
 from clipper.compose.stages import thumbs as compose_thumbs
@@ -108,6 +109,12 @@ def _run_render(comp_id: str) -> None:
             log.info("Render %s: trimming %.2fs → %.2fs", comp_id, concat_dur, target_sec)
             _trim_to_duration(intermediate_path, target_sec, trimmed_path)
             picture_path = trimmed_path
+
+        # Step 4b: caption alignment + burn
+        captioned_path = str(comp_dir / "picture_captioned.mp4")
+        log.info("Render %s: captions (mode=%s)", comp_id, comp.get("captions_mode", "script"))
+        compose_caption.run(comp, picture_path, captioned_path)
+        picture_path = captioned_path
 
         # Step 5: write last_render.mp4
         last_render_path = str(comp_dir / "last_render.mp4")

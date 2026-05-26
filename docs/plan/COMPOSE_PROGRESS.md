@@ -383,3 +383,20 @@ Add one YouTube segment with trim → wait for download (progress bar) → click
 **Root cause (found during verify):** `_ceAttachWaveformDrag` called `document.addEventListener('mousemove', …)` and `document.addEventListener('mouseup', …)` on every invocation. It was called from three places: initial `attachCERightRailHandlers`, the `mousemove` handler itself (to re-wire newly inserted DOM handles after each live overlay update), and `_ceRebuildWaveformOverlay` → `_ceAttachRangeListHandlers`. A single drag gesture produced O(n) listener accumulation where n = number of mousemove events fired — potentially hundreds of stacked handlers per drag, growing with each re-render.
 
 **Fix:** Extracted document-level listeners into `_ceInitDragListeners()`, guarded by a `_wrDragListenersAdded` boolean so they register exactly once per page load. Split handle wiring into `_ceWireHandleMousedown(ranges, dur)` which only attaches `mousedown` to `.ce-wr-handle` elements — safe to call on every re-render since it touches only the newly inserted DOM nodes. `_ceAttachWaveformDrag` now calls `_ceInitDragListeners()` + `_ceWireHandleMousedown()`. The `mousemove` handler calls only `_ceWireHandleMousedown` after updating the overlay, not `_ceAttachWaveformDrag`.
+
+---
+
+### Step 3.16 — Caption alignment + ASS burn ✅
+
+**Files created:**
+- `clipper/compose/stages/caption.py` — `run(comp, picture_path, out_path)` entry point:
+  - Mode `'transcribe'`: calls `_transcribe_voiceover(voiceover.wav)` via `AssemblyAITranscriber`; uses transcript text verbatim as words.json.
+  - Mode `'script'`: transcribes voiceover then calls `_align_script_to_transcript(captions_text, transcript)` — zip by position when counts match; falls back to even-spacing across voiceover duration when they differ.
+  - Mode `'srt'`: `_parse_srt(captions_text)` — splits SRT cues into per-word dicts with evenly subdivided timing.
+  - All modes: writes `words.json` to comp dir for debuggability, builds ASS via `_build_ass` (reused from `clipper/stages/caption.py`), burns via `_burn_captions` (same).
+  - Missing prerequisites (empty `captions_text`, missing `voiceover.wav`, unknown mode) → `shutil.copy2` passthrough; missing `ASSEMBLYAI_API_KEY` → `RuntimeError` with helpful message.
+
+**Files edited:**
+- `clipper/compose/render.py` — added `from clipper.compose.stages import caption as compose_caption`; inserted caption burn step (Step 4b) between picture assembly and `last_render.mp4` copy. Output is `picture_captioned.mp4`; this becomes the new `picture_path` fed to the copy step.
+
+**Acceptance test:** Set `captions_mode='script'`, enter a 1-sentence script in Captions panel, generate or upload a voiceover → click Render preview → rendered video plays with captions burned at the correct positions, word-aligned to voiceover timing.

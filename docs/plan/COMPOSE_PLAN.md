@@ -862,7 +862,7 @@ unified rows with a `pipeline` field.
   **Acceptance test:** Upload a 30s WAV → auto-split → N ranges appear → drag a handle
   → value persists → reload page → handle position preserved.
 
-- [ ] **Step 3.16 — Caption alignment + ASS burn**
+- [x] **Step 3.16 — Caption alignment + ASS burn**
 
   **Deliverables:**
   - `clipper/compose/stages/caption.py`:
