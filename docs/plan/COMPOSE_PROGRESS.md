@@ -257,3 +257,22 @@ Opus 4.7 read-only eval of the bridge phase flagged that the trim-validation cla
 
 **Acceptance test (Phase C MILESTONE):**
 Add one YouTube segment with trim → wait for download (progress bar) → click Render preview → status pill cycles render_queued→rendering→rendered → 9:16 video plays in center pane. Reload page → video still plays.
+
+---
+
+## Phase C post-ship fixes (2026-05-26)
+
+### 6. BUG — YT download stalled at 0% immediately after Fetch ✅ FIXED
+
+**Root cause:** `api_create_segment` pre-set `status='downloading'` + `download_progress=0` on the segment row *before* calling `compose_runner.submit_ingest`. The ingest executor thread re-reads the row on entry (`compose_db.get_segment(seg_id)`) and passes the fresh copy to `run_for_segment`. The race-fix logic at the top of `run_for_segment` checks `seg['status'] == 'downloading'` and — correctly, by its own logic — concludes another thread is already running, then poll-waits 180 s before returning without downloading anything. The segment was permanently stuck at `status='downloading', download_progress=0`.
+
+**Fix:**
+- `dashboard/main.py:api_create_segment` — removed the `update_segment(status='downloading', download_progress=0)` call before `submit_ingest`. The executor now receives the segment in `status='pending'`, so the race-fix is never triggered on a fresh ingest.
+- `clipper/compose/stages/ingest.py` — `run_for_segment` now owns the `status='downloading'` write (sets it right before opening the `yt-dlp` subprocess). Added `FileNotFoundError` guard around `subprocess.Popen` that sets `status='failed'` with a helpful message if `yt-dlp` is not on PATH. Added `bufsize=1` (line-buffered) to match the Clip-side ingest and ensure progress lines flush in real time. Changed progress write to skip the DB update when `pct == last_pct` (avoids redundant SQLite writes on repeated `[download] X%` lines).
+- One existing stuck segment (`status='downloading'`, no source file on disk) was manually reset to `status='pending'` via a one-off Python snippet.
+
+### 7. BUG — Render output duration equals segment duration instead of target_sec ✅ FIXED
+
+**Root cause:** `render.py:_run_render` only padded with black frames when `concat_dur < target_sec - 0.1`. When the segment (un-trimmed YouTube video) was *longer* than the target, it passed through unchanged. The pad/trim step had no upper-bound enforcement.
+
+**Fix:** `clipper/compose/render.py` — added an `elif concat_dur > target_sec + 0.1` branch that calls the new `_trim_to_duration(src, duration, out_path)` helper. The helper uses `ffmpeg -t <target_sec> -c copy` (stream-copy, keyframe-aligned) to cut the concatenated picture at the target length. For a preview render this precision is sufficient; exact-frame trimming is handled by setting `trim_in`/`trim_out` on individual segments before the final render.
