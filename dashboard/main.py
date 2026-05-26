@@ -679,6 +679,16 @@ def api_patch_segment(seg_id: str, body: SegmentPatchBody):
     if not seg:
         raise HTTPException(404, "Segment not found")
     fields = {k: v for k, v in body.model_dump().items() if v is not None}
+    src_dur = seg.get("source_duration")
+    if src_dur is not None:
+        if "trim_out" in fields and fields["trim_out"] > src_dur:
+            fields["trim_out"] = src_dur
+        if "trim_in" in fields and fields["trim_in"] > src_dur:
+            fields["trim_in"] = src_dur
+    if "trim_in" in fields and fields["trim_in"] < 0:
+        fields["trim_in"] = 0.0
+    if "trim_out" in fields and fields["trim_out"] < 0:
+        fields["trim_out"] = 0.0
     if fields:
         compose_db.update_segment(seg_id, **fields)
     return {"ok": True}

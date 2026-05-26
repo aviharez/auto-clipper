@@ -183,12 +183,19 @@ Only `create_segment` and `reorder_segments` were bumping the parent's `updated_
 
 ---
 
-### 4. Minor items — deferred to their natural phase
+### 4. Post-bridge eval fix — server-side trim clamp ✅ FIXED (2026-05-26)
+
+Opus 4.7 read-only eval of the bridge phase flagged that the trim-validation clamp specified in 3.5b's plan (`COMPOSE_PLAN.md:583`) was not implemented. `SegmentPatchBody` was a plain field-copy, letting `trim_out > source_duration` (or negative values) persist and producing bogus renders downstream.
+
+**Fix:** `dashboard/main.py:api_patch_segment` (lines 676–694) now clamps incoming `trim_in` / `trim_out` against the segment's `source_duration` when known, and floors both at 0. The plan only required clamping `trim_out` upward; the symmetric upper clamp on `trim_in` and the lower floor are trivial extensions of the same guard. `trim_in < trim_out` is deliberately NOT enforced — that ordering invariant belongs to Phase C render validation.
+
+### 5. Minor items — deferred to their natural phase
 
 - Bed-music / SFX dropdowns lose the persisted value when the library is empty (current state). Will resolve naturally when 3.20/3.21 bundle the asset libraries.
 - `/api/sfx-library` and `/api/music-library` return `duration_sec: None`. Add ffprobe-based duration computation when bundling the libraries in 3.20/3.21.
 - Sidebar `nav-compose-count` only updates on `showComposeList()`. Cosmetic; defer.
 - Dataclasses in `clipper/compose/base.py` are dead code (DB layer returns dicts, same pattern as `clipper/jobs.py`). Decision: keep for now as documentation of the schema shape; consider materializing them in Phase E if typed access is needed.
+- Ingest progress writes are not time-throttled (every `[download] X%` line triggers a SQLite update). yt-dlp's stdout cadence is naturally low enough that this hasn't been a perf issue, but the 500ms throttle called out in 3.5b's plan was not implemented. Revisit if SQLite contention shows up during multi-segment ingest.
 
 ### Verification
 

@@ -108,7 +108,7 @@ re-use. **Read each file at least once before touching it.**
 | `clipper/transcribe/api.py` | `AssemblyAITranscriber.transcribe(audio_path, start=0.0, end=None)` returns `list[Word]`. Use unchanged on `voiceover.wav`. |
 | `clipper/delivery/base.py` + `local.py` + `gdrive.py` | `Deliverer.deliver(clip_file, job, candidate) -> status`. For Compose, pass a fake "candidate-shaped" dict with `id`, `title`, `output_path`. |
 | `dashboard/main.py` | `_DELIVERERS` registry (line 28). Endpoint patterns: pydantic BaseModel for body, dict return, `HTTPException(404, "…")` for errors. `/api/jobs/from-form` (line 117) and `/api/jobs` upload (line 182) show input patterns. `/api/jobs/{id}/deliver` (line 515) shows delivery wiring. |
-| `dashboard/static/index.html` + `app.js` + `style.css` | Sidebar nav structure (index.html lines 12–40). Hash router (`app.js` `route()`, line ~92). Polling pattern (3s for list, 2.5s for detail). Status pill `badge(status)` (line 59). Modal pattern in "New Job" modal (`app.js` lines 146–239). |
+| `dashboard/static/index.html` + 5 `app-*.js` files + `style.css` | Sidebar nav structure (index.html lines 12–40). `app.js` was split in bridge Step 3.5a into `app-core.js` (router/utilities/`badge`), `app-jobs.js` (job list+detail/modal), `app-history.js`, `app-compose.js` (compose list), `app-compose-editor.js` (editor). Polling pattern (3s list, 2.5s detail). Compose editor work belongs in `app-compose-editor.js`; new routes in `app-core.js`. |
 
 **One-time tooling checks before Phase E:**
 - `pip install kokoro-onnx librosa` (add to `requirements.txt`).
@@ -234,6 +234,23 @@ CREATE TABLE IF NOT EXISTS composition_sfx (
 Composition status values (full state machine):
 `draft → render_queued → rendering → rendered → (finalize_queued → finalizing →
 finalized → delivering → delivered_local | delivered_gdrive) | failed`.
+
+Segment status values (full state machine; `pending → downloading → ready | failed`
+locked in bridge Step 3.5b, `→ normalized` added in Phase C Step 3.6):
+
+- `pending` — row inserted, no source on disk yet. Today only `image-URL` kind
+  transitions through this; `yt` skips to `downloading` immediately, `local`/`image`
+  uploads skip to `ready` after `_probe_duration` runs in the upload endpoint.
+- `downloading` — yt-dlp in-flight. `download_progress` populated 0..100; reset to
+  NULL on terminal transitions. Source of truth is `status`; only read
+  `download_progress` while `status='downloading'`.
+- `ready` — source cached on disk under `segments/<idx>/source.<ext>`;
+  `source_duration` populated via ffprobe. Set by `compose_runner.submit_ingest` (yt)
+  or by the upload endpoint (local/image).
+- `normalized` — `segments/<idx>/normalized.mp4` written at locked 1080×1920/30fps/
+  48k stereo spec. Set by Phase C Step 3.6 normalize stage.
+- `failed` — terminal error; `error` field has traceback summary. `download_progress`
+  is NULL. Row stays in the list so the user can delete + retry.
 
 ---
 
@@ -626,15 +643,14 @@ unified rows with a `pipeline` field.
 > preview pane.** No audio, no captions, no hook, no timeline yet. This is proof of
 > life for the entire render plumbing.
 
-- [ ] **Step 3.6 — Segment normalize (ingest + cut + reframe in one pass)**
+- [ ] **Step 3.6 — Segment normalize (cut + reframe)**
+
+  > **Note:** `clipper/compose/stages/ingest.py` already exists from bridge
+  > Step 3.5b — it handles yt-dlp download, progress reporting, ffprobe
+  > duration, idempotency, and per-status DB writes. Step 3.6 is *normalize
+  > only*; the render path just calls the existing `ingest.run_for_segment`.
 
   **Deliverables:**
-  - `clipper/compose/stages/ingest.py`:
-    - For `kind='yt'`: run `yt-dlp` to download into `segments/<idx>/source.<ext>`
-      (use the existing `clipper/stages/ingest.py` invocation pattern; cache the full
-      source so re-trim doesn't re-download).
-    - For `kind='local'` / `kind='image'`: file is already in
-      `segments/<idx>/source.<ext>` from the upload endpoint.
   - `clipper/compose/stages/normalize.py`:
     - Video segments: precise re-encode (re-encode, never stream-copy — same locked
       rationale as Clip §5.1) from `trim_in` to `trim_out`. Reframe to 1080×1920 using
@@ -644,11 +660,14 @@ unified rows with a `pipeline` field.
     - Image segments: call new `image_motion.py:render_image_segment(src, dur, motion,
       out_path)` (ffmpeg recipe §R2).
   - Updates `composition_segments.status='normalized'` per segment on success.
+  - **Idempotency:** if `status=='normalized'` and `normalized.mp4` exists on disk,
+    return immediately. Mirror the `status=='ready'` check already in `ingest.py`.
 
   **Acceptance test:**
   ```powershell
-  # After creating a composition with 1 YT segment trim_in=0, trim_out=5:
-  python -c "from clipper.compose.stages import ingest, normalize; from clipper.compose import db; comp = db.get_composition('<id>'); segs = db.get_segments('<id>'); ingest.run_for_segment(comp, segs[0]); normalize.run_for_segment(comp, segs[0])"
+  # After creating a composition with 1 YT segment trim_in=0, trim_out=5
+  # (segment is already 'ready' from eager ingest in bridge Step 3.5b):
+  python -c "from clipper.compose.stages import normalize; from clipper.compose import db; comp = db.get_composition('<id>'); segs = db.get_segments('<id>'); normalize.run_for_segment(comp, segs[0])"
   ffprobe data\compositions\<id>\segments\0\normalized.mp4
   ```
   Expected: ffprobe shows 1080×1920, 30fps, ~5s duration, 48000 Hz stereo audio.
@@ -672,16 +691,32 @@ unified rows with a `pipeline` field.
   **Acceptance test:** Manually invoke for 2 segments with a fade transition → output
   plays in VLC, transitions visible at the seam.
 
-- [ ] **Step 3.8 — Compose runner + dedicated executor + render orchestrator**
+- [ ] **Step 3.8 — Compose render executor + render orchestrator**
+
+  > **Note:** `clipper/compose/runner.py` already exists from bridge Step
+  > 3.5b with `_ingest_executor` (max_workers=2) and a stub `start()` that
+  > only logs. This step EXTENDS that file — do not recreate it. Both
+  > executors coexist: `_ingest_executor` for eager prefetch downloads,
+  > `_compose_executor` for full render orchestration.
+  > `clipper/runner.py:start()` already invokes `compose_runner.start()`
+  > (line 229) — no wiring change needed there, just expand what `start()`
+  > does.
 
   **Deliverables:**
-  - `clipper/compose/runner.py`:
-    - `_compose_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="compose")`.
-    - `_compose_loop()` daemon thread: every 2s, queries
+  - Extend `clipper/compose/runner.py`:
+    - Add `_compose_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="compose-render")`
+      alongside the existing `_ingest_executor`.
+    - Add `_compose_loop()` daemon thread: every 2s, queries
       `compositions WHERE status='render_queued'`, picks the oldest, sets status to
       `'rendering'`, submits to `_compose_executor.submit(_run_render, comp_id)`.
-    - `start()` is called from existing `clipper/runner.py:start()` so the dashboard's
-      `on_startup` boots both loops with one call.
+    - Expand `start()` to spawn the `_compose_loop` daemon thread (currently a no-op
+      log line).
+  - **Ingest race fix** in `clipper/compose/stages/ingest.py:run_for_segment`:
+    on entry, if `seg['status'] == 'downloading'`, poll-wait — re-read the row every
+    1s (timeout ~180s) until status flips to `ready` or `failed`. Without this guard,
+    a user who clicks Render preview while eager-ingest is still in flight will
+    trigger two `yt-dlp` invocations writing to the same `source.*` path. Today's
+    idempotency check only handles the `ready` case.
   - `clipper/compose/render.py`:
     - `_run_render(comp_id)`:
       1. Load composition + segments.
@@ -1110,18 +1145,25 @@ yuv420p, 30fps, 48k stereo).
 - `assets/sfx/`, `assets/music/` with starter files.
 
 **Edit (additive only):**
-- `clipper/jobs.py:init_db()` — append 4 new CREATE TABLE statements.
-- `clipper/runner.py:start()` — call `compose.runner.start()` after the existing
-  thread starts.
-- `clipper/config.py:HOOK_PRESETS` — add compose-specific animation presets if needed.
-- `dashboard/main.py` — append new "Compose" API section after the existing
-  "History" / "Deliver" sections. Add `_COMPOSE_DELIVERERS = _DELIVERERS` (same
-  registry).
-- `dashboard/static/index.html` — add one `<a class="nav-item">` for Compose.
-- `dashboard/static/app.js` — add route handlers for `#compose` and `#compose/<id>`.
-- `dashboard/static/style.css` — add styles for editor 3-column + timeline strip +
-  waveform editor.
-- `requirements.txt` — add `kokoro-onnx`, `soundfile`, `librosa`.
+- ~~`clipper/jobs.py:init_db()` — append 4 new CREATE TABLE statements.~~ ✅ done in
+  Step 3.1; 3.5b added `download_progress` + `source_duration` to `_migrate`.
+- ~~`clipper/runner.py:start()` — call `compose.runner.start()` after the existing
+  thread starts.~~ ✅ done in Step 3.5b at `clipper/runner.py:229`.
+- ~~`dashboard/static/index.html` — add one `<a class="nav-item">` for Compose.~~
+  ✅ done in Step 3.2; 3.5a updated script-tag load order.
+- ~~`dashboard/static/app.js` — add route handlers for `#compose` and `#compose/<id>`.~~
+  ✅ done in Step 3.2; routes now live in `app-core.js` after the 3.5a split.
+- `clipper/config.py:HOOK_PRESETS` — add compose-specific animation presets if needed
+  (Phase E Step 3.17).
+- `dashboard/main.py` — append further "Compose" API sections after the existing
+  "History" / "Deliver" sections (most CRUD already in place from Phase A/B/bridge;
+  remaining endpoints: render, finalize, deliver, voiceover, voice-ranges).
+  Add `_COMPOSE_DELIVERERS = _DELIVERERS` (same registry) when wiring Step 3.23.
+- `dashboard/static/style.css` — add styles for timeline strip + waveform editor
+  (Phase D).
+- `dashboard/static/app-compose-editor.js` — extend with timeline, waveform, drag-
+  reorder, render-preview wiring (Phases C/D).
+- `requirements.txt` — add `kokoro-onnx`, `soundfile`, `librosa` (Phase E Step 3.13).
 
 ---
 
