@@ -1205,6 +1205,20 @@ function attachCERightRailHandlers(comp) {
     sel.onchange = () => _cePatchComp({ bed_music_file: sel.value });
   }).catch(() => {});
 
+  // Load SFX library async and populate all SFX file selects
+  api('GET', '/sfx-library').then(items => {
+    if (!items.length) return;
+    $$('.ce-sfx-row').forEach(row => {
+      const sfxId = row.dataset.sfxId;
+      const sel = row.querySelector('select');
+      if (!sel) return;
+      const currentFile = (comp.sfx || []).find(s => s.id === sfxId)?.file || '';
+      sel.innerHTML = '<option value="">-- pick SFX --</option>' +
+        items.map(i => `<option value="${escAttr(i.path)}"${i.path === currentFile ? ' selected' : ''}>${escAttr(i.name)}</option>`).join('');
+      sel.onchange = () => _cePatchSFX(sfxId, { file: sel.value });
+    });
+  }).catch(() => {});
+
   // SFX add button
   const addSfxBtn = document.getElementById('ce-add-sfx-btn');
   if (addSfxBtn) {

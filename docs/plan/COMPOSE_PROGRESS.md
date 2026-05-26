@@ -528,3 +528,14 @@ Add one YouTube segment with trim → wait for download (progress bar) → click
 - `dashboard/static/style.css` — added `.compose-filter-tabs`, `.hist-pipeline-tabs`, `.compose-tab` styles.
 
 **Acceptance test:** History page shows All/Clip/Compose tabs. Clip tab shows only clip candidates. Compose tab shows compositions with thumbnail previews. All tab interleaves by date. Existing Clip flows unaffected.
+
+---
+
+## Phase F — Post-verification fix (2026-05-26)
+
+**Bug found during verify:** Spot SFX file `<select>` rows showed empty options after clicking "+ Add SFX". The `renderCEPanelSFX` template only rendered a single `<option>` with the saved file value; when a new row was added with `file: ''`, the dropdown was blank. No equivalent async library-load existed for SFX (unlike the bed music dropdown which fetches `/api/music-library` after render).
+
+**Fix applied:**
+- `dashboard/static/app-compose-editor.js` — added async SFX library load block immediately after the music library load block in `_ceCoreAttachHandlers`. On render, `GET /api/sfx-library` is called; each `.ce-sfx-row select` is populated with all 5 library entries (pre-selecting the saved file), and `onchange` is rewired to `_cePatchSFX`.
+
+**Verified:** After clicking "+ Add SFX", all three SFX row selects show `['-- pick SFX --', 'chime', 'click', 'pop', 'swoosh', 'whoosh']` with no JS errors. Existing saved files are pre-selected correctly.
