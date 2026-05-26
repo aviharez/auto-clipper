@@ -114,15 +114,29 @@ def get_segment(seg_id: str) -> Optional[dict]:
 def update_segment(seg_id: str, **fields):
     cols = ", ".join(f"{k} = ?" for k in fields)
     with get_conn() as conn:
+        seg = conn.execute(
+            "SELECT composition_id FROM composition_segments WHERE id = ?", (seg_id,)
+        ).fetchone()
         conn.execute(
             f"UPDATE composition_segments SET {cols} WHERE id = ?",
             (*fields.values(), seg_id),
         )
+    if seg:
+        update_composition(seg["composition_id"])
 
 
 def delete_segment(seg_id: str):
+    import shutil
     with get_conn() as conn:
+        row = conn.execute(
+            "SELECT composition_id, idx FROM composition_segments WHERE id = ?", (seg_id,)
+        ).fetchone()
         conn.execute("DELETE FROM composition_segments WHERE id = ?", (seg_id,))
+    if row:
+        seg_dir = _comp_dir(row["composition_id"]) / "segments" / str(row["idx"])
+        if seg_dir.exists():
+            shutil.rmtree(str(seg_dir), ignore_errors=True)
+        update_composition(row["composition_id"])
 
 
 def reorder_segments(comp_id: str, ordered_ids: list):

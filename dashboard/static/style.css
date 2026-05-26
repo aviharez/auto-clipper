@@ -2175,6 +2175,29 @@ hr { border: none; border-top: 1px solid var(--border); margin: 14px 0; }
   margin-bottom: 5px;
 }
 
+/* ── Segment download progress ───────────────────────────────────────────── */
+
+.ce-seg-dl-bar {
+  height: 3px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+  margin: 3px 12px 0;
+}
+
+.ce-seg-dl-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.4s ease;
+}
+
+.ce-seg-error {
+  font-size: 10px;
+  color: var(--red);
+  padding: 2px 12px 4px;
+}
+
 /* ── Preview placeholder ─────────────────────────────────────────────────── */
 
 .compose-preview-placeholder {

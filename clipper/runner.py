@@ -16,6 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 import shutil
 
 import clipper.jobs as db
+import clipper.compose.runner as compose_runner
 from clipper.assembly.individual import IndividualAssembler
 from clipper.candidates.manual import ManualCandidateSource
 from clipper.config import JOBS_DIR
@@ -225,3 +226,4 @@ def start():
     t = threading.Thread(target=_runner_loop, daemon=True, name="clipper-runner")
     t.start()
     log.info("Clipper runner started")
+    compose_runner.start()

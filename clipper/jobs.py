@@ -33,6 +33,8 @@ def _migrate(conn: sqlite3.Connection):
         ("candidates", "delivery_url", "TEXT"),
         ("candidates", "hook_broll_start", "REAL"),
         ("candidates", "hook_broll_end", "REAL"),
+        ("composition_segments", "download_progress", "INTEGER"),
+        ("composition_segments", "source_duration", "REAL"),
     ]
     for table, col, col_type in new_cols:
         try:

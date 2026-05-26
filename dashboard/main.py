@@ -8,7 +8,7 @@ import traceback
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 import clipper.jobs as db
 from clipper import runner
+import clipper.compose.runner as compose_runner
 from clipper.config import (
     CAPTION_PRESETS, DEFAULT_CAPTION_PRESET,
     HOOK_PRESETS, DEFAULT_HOOK_PRESET,
@@ -627,11 +628,18 @@ def api_create_segment(comp_id: str, body: SegmentCreateBody):
     if not comp:
         raise HTTPException(404, "Composition not found")
     result = compose_db.create_segment(comp_id, body.kind, body.source_url, body.label)
+    if body.kind == "yt" and body.source_url:
+        compose_db.update_segment(result["id"], status="downloading", download_progress=0)
+        compose_runner.submit_ingest(comp_id, result["id"])
     return result
 
 
 @app.post("/api/compositions/{comp_id}/segments/upload")
-async def api_upload_segment(comp_id: str, kind: str, file: UploadFile = File(...)):
+async def api_upload_segment(
+    comp_id: str,
+    kind: str = Form(...),
+    file: UploadFile = File(...),
+):
     comp = compose_db.get_composition(comp_id)
     if not comp:
         raise HTTPException(404, "Composition not found")
@@ -643,7 +651,14 @@ async def api_upload_segment(comp_id: str, kind: str, file: UploadFile = File(..
     dest = seg_dir / f"source{suffix}"
     content = await file.read()
     dest.write_bytes(content)
-    compose_db.update_segment(result["id"], source_file=str(dest))
+    from clipper.compose.stages.ingest import _probe_duration
+    source_duration = _probe_duration(dest)
+    compose_db.update_segment(
+        result["id"],
+        source_file=str(dest),
+        status="ready",
+        source_duration=source_duration,
+    )
     return result
 
 

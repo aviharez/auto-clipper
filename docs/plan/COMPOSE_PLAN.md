@@ -408,6 +408,218 @@ unified rows with a `pipeline` field.
 
   **Acceptance test:** Edit every panel field. Reload page. All values persisted.
 
+### Phase B → C bridge — refactor + eager ingest
+
+> Two pre-Phase-C tasks. Refactor lands first so the download-on-fetch UI changes
+> land in the smaller `app-compose-editor.js` instead of bloating the 2.4k-line
+> `app.js`. Eager ingest then makes the source available before Render preview is
+> clicked, so the smoke render in Phase C is a real "click-and-watch" experience.
+>
+> **Constraint reminder from Phase A/B post-eval** (`docs/plan/COMPOSE_PROGRESS.md`):
+> never assume contiguous `segment.idx` values after delete. Iterate
+> `db.get_segments(comp_id)` and use position in that ordered list whenever an
+> integer index is needed; bind FK-style references to `segment.id`, not `idx`.
+
+- [x] **Step 3.5a — Refactor `dashboard/static/app.js` into 5 files (plain script tags)**
+
+  **Motivation:** `app.js` is 2,381 lines and growing. Pure code-motion split into
+  feature-aligned files, no behavior change. Plain `<script>` tags so the implicit-
+  global model used today (every top-level `function` and `let` is a window global)
+  continues to work — no ESM migration, no bundler.
+
+  **Deliverables:**
+  - Split `dashboard/static/app.js` into five files. The current file's `// ── …`
+    section comments already mark natural seams; use those as the cut lines.
+
+    | New file | Source line range (current `app.js`) | Contents |
+    |---|---|---|
+    | `app-core.js` | 1–108, 1151–1173 (preset cache) | Utilities (`toast`, `api`, `fmt*`, `badge`, `escAttr`, `escHtml`), sidebar helpers, router (`route` + `hashchange`/`load` listeners), preset cache (`loadPresets`, `_presetOptions`, `_formPresetOptions`). |
+    | `app-jobs.js` | 110–1349 (excluding the preset cache block) | Job list, New Job modal, form-based job creation, upload setup, job detail, clip rendering, hook editor (text + video), transcript editor, boundary suggestion, nudge state, deliverer selector, recut/approval/retry helpers. |
+    | `app-history.js` | 1462–1632 | `showHistory`, `renderHistoryList`, `renderHistoryGrid`, `groupByDate`. |
+    | `app-compose.js` | 1633–1753 | `showComposeList`, `renderComposeList`, `openNewComposeModal`, the `_composePoll` / `_newComposeModalEl` globals it owns. |
+    | `app-compose-editor.js` | 1754–2381 | `showComposeEditor`, `renderCESegments*`, `setupCEAddSegment`, `renderCERightRail`, all `renderCEPanel*`, `_ce*` helpers. |
+
+  - Update `dashboard/static/index.html:54` from the single `<script src="/static/app.js">`
+    to five tags in dependency order:
+    ```html
+    <script src="/static/app-core.js"></script>
+    <script src="/static/app-jobs.js"></script>
+    <script src="/static/app-history.js"></script>
+    <script src="/static/app-compose.js"></script>
+    <script src="/static/app-compose-editor.js"></script>
+    ```
+  - Delete `dashboard/static/app.js` only after every function it contained is in
+    one of the new files. Don't leave a re-export shim — implicit globals work
+    across `<script>` boundaries as long as load order is correct.
+  - No code changes other than moving lines. Same function names, same globals,
+    same behavior. Don't "improve" anything during the move — that's a separate
+    task and will hide regressions in the diff.
+
+  **Two collisions to watch for during the cut:**
+  - `let _composePoll;` is declared at the top of the current compose section
+    (line 1635). It belongs in `app-compose.js`. `app-compose-editor.js`
+    references it (`clearTimeout(_composePoll)` at line 1761) — that still works
+    as a window global across script files.
+  - `loadPresets()` is called from `showComposeEditor` (line 1832). Keep the
+    preset cache in `app-core.js` and ensure `app-core.js` loads before
+    `app-compose-editor.js` (the order above already does this).
+
+  **Acceptance test:**
+  1. After the split, open `http://localhost:8000` → Jobs list loads, click a job
+     → detail renders. Hook editor, transcript editor, boundary suggestion,
+     deliverer selector all still work.
+  2. Navigate to `#compose` → list loads, create a new comp → editor opens,
+     add a YT segment, edit trim, expand/collapse panels, toggle captions mode →
+     everything persists on reload.
+  3. `git diff --stat` shows only file moves (deletions in `app.js`, additions
+     in the 5 new files) and the one-line `index.html` change. No net change in
+     code content.
+  4. Browser console: no `ReferenceError: <fn> is not defined` while navigating
+     between Jobs, History, Compose list, Compose editor.
+
+- [x] **Step 3.5b — Eager YT ingest on Fetch (with per-segment progress)**
+
+  **Motivation:** Today, clicking Fetch on a YT segment only inserts a `pending`
+  DB row with the URL. The actual download runs inside Render preview (Phase C
+  Step 3.8), which means a 5–15 min render becomes 30–60 min of opaque waiting.
+  Eager ingest decouples download from render and gives the user a visible
+  progress bar in the segment row, so by the time they click Render the source
+  is already cached.
+
+  **Why this is safe to land before Phase C:** the render path described in
+  Step 3.8 already calls `ingest.run_for_segment` per segment. The
+  implementation of that function (in `clipper/compose/stages/ingest.py`, to be
+  written in Step 3.6) only needs a guard: if `segments/<idx>/source.<ext>`
+  already exists and `segment.status='ready'`, skip the download. So eager
+  ingest in 3.5b becomes a transparent prefetch from Phase C's perspective.
+
+  **Deliverables:**
+
+  - **Schema migration** in `clipper/jobs.py:_migrate()` — append two idempotent
+    `ALTER` entries to the existing `new_cols` list, following the exact pattern
+    already used at lines 29–41:
+    ```python
+    ("composition_segments", "download_progress", "INTEGER"),
+    ("composition_segments", "source_duration",   "REAL"),
+    ```
+    `download_progress` is 0–100 while downloading, NULL otherwise.
+    `source_duration` is populated via `ffprobe` after download completes; it
+    lets the editor default `trim_out` to the full source length.
+
+  - **Ingest stage** at `clipper/compose/stages/ingest.py` (this file is also
+    Step 3.6's deliverable — write the structure here in 3.5b, fill the
+    normalize/cut piece in 3.6). The yt-dlp invocation must mirror the existing
+    Clip-side ingest at `clipper/stages/ingest.py`: same `yt-dlp` binary, same
+    progress-hook pattern. Key function:
+    ```python
+    def run_for_segment(comp: dict, seg: dict) -> None:
+        """For kind='yt': download to segments/<idx>/source.<ext>, write
+        download_progress 0..100 throughout, set source_duration via ffprobe
+        on completion, flip seg.status='ready'. For kind='local'|'image':
+        no-op (source already on disk from upload endpoint), just probe
+        duration. Idempotent: if source file exists and status='ready',
+        returns immediately."""
+    ```
+    Errors → `seg.status='failed'`, `seg.error=<traceback summary>`,
+    `download_progress=NULL`.
+
+  - **Ingest executor** in a new `clipper/compose/runner.py` (this file is also
+    Step 3.8's deliverable — create the file here for the ingest executor;
+    the render executor and `_compose_loop` come in 3.8):
+    ```python
+    _ingest_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="seg-ingest")
+
+    def submit_ingest(comp_id: str, seg_id: str) -> None:
+        _ingest_executor.submit(_run_segment_ingest, comp_id, seg_id)
+
+    def _run_segment_ingest(comp_id, seg_id):
+        # load comp + seg, run ingest.run_for_segment, persist status
+    ```
+    `start()` (defined here for Step 3.8's daemon thread later) doesn't need
+    to do anything for ingest yet — the executor accepts work via
+    `submit_ingest` directly from the API handler.
+
+  - **API wiring** in `dashboard/main.py`:
+    - In `api_create_segment` (line 624): after `create_segment(...)`, if
+      `body.kind == 'yt'`, set `status='downloading'`, `download_progress=0` on
+      the new row, then call `compose_runner.submit_ingest(comp_id, result["id"])`.
+    - In `api_upload_segment` (line 633, post-Form-fix): after writing the
+      uploaded file, call `compose_runner.submit_ingest(comp_id, result["id"])`
+      to populate `source_duration` for `local`/`image` kinds. Status flips
+      straight from `pending` to `ready` (no download phase).
+    - Import: add `import clipper.compose.runner as compose_runner` near
+      `import clipper.compose.db as compose_db` (line 551).
+
+  - **Progress hook** inside `run_for_segment` — yt-dlp accepts a Python hook
+    via `--newline` plus stdout parsing, OR via the Python API
+    (`yt_dlp.YoutubeDL(..., progress_hooks=[fn])`). The existing Clip-side
+    ingest uses the subprocess approach; reuse it. Parse `downloaded_bytes` /
+    `total_bytes` from each progress event, compute pct, call
+    `compose_db.update_segment(seg_id, download_progress=pct)`. Throttle to one
+    write per ~500 ms to avoid hammering SQLite.
+
+  - **Frontend — segment-row progress strip** in `app-compose-editor.js`
+    (the file created in 3.5a):
+    - In `renderCESegmentRow(seg)`: when `seg.status === 'downloading'`,
+      render a thin progress strip below the collapsed row using
+      `seg.download_progress` (0–100). Mirror the visual pattern in
+      `renderDownloadProgress(pct)` at the current `app.js:1025`.
+    - When `seg.status === 'failed'`, show `seg.error` as a small red caption.
+    - When `seg.status === 'ready'`, hide the strip; if `seg.duration == null`
+      and `seg.source_duration != null`, show the full source duration as
+      a hint next to the trim_out input.
+
+  - **Frontend — polling** in `app-compose-editor.js`:
+    - After `renderCESegments`, if any segment has `status='downloading'`,
+      start a 1.5 s `setTimeout` loop that re-fetches `GET /api/compositions/{id}`
+      and re-renders the segments list. Stop polling when no segment is in
+      `downloading` state. Reuse the `_compEditorPoll` global already declared
+      at the top of the editor section.
+
+  - **Frontend — auto-fill trim_out on ready** in `app-compose-editor.js`:
+    - When a segment transitions to `ready` with `source_duration` populated
+      and `trim_out` is null, PATCH `trim_out=source_duration` so the segment
+      shows a sensible default range. (User can still nudge with ±0.5s.)
+
+  - **Trim validation** in the existing `SegmentPatchBody` handler
+    (`dashboard/main.py:661`): clamp `trim_out` to `source_duration` if both
+    are known. Wrong-trim is a Phase C problem, but a server-side clamp here
+    prevents bogus renders later.
+
+  **Acceptance test:**
+  1. Open editor, paste a 30 s YouTube URL, click Fetch.
+  2. Segment row appears immediately with `downloading` status pill and a
+     0% progress strip.
+  3. The strip animates upward as bytes arrive (polling every 1.5 s).
+  4. On completion, status flips to `ready`, strip disappears, `trim_out`
+     auto-fills to the source duration.
+  5. Click Fetch on a 404 URL → status flips to `failed`, error text appears,
+     row is keepable (user can delete + retry).
+  6. Reload page mid-download → progress resumes from current
+     `download_progress` value (no double-download — the running executor
+     thread is what's persisting progress, not the page).
+  7. **Regression:** Local/Image upload still works (Step 3.3 acceptance);
+     after upload, `source_duration` is populated via ffprobe.
+  8. **Render-time check (light, no Phase C work):** manually run
+     `python -c "from clipper.compose.stages.ingest import run_for_segment; …"`
+     on a segment whose source already exists → function returns immediately,
+     no re-download.
+
+  **Known gotchas:**
+  - yt-dlp emits progress on stderr in some configurations and stdout in
+     others. Match whatever the Clip-side ingest uses; don't switch streams.
+  - SQLite `WRITE` from the ingest executor thread + the runner thread + the
+     FastAPI request handler all happen concurrently. WAL mode is already on
+     (`clipper/jobs.py:22`), so concurrent writes are fine, but each helper
+     must use its own `get_conn()` — never share a connection across threads.
+  - Don't block FastAPI: `submit_ingest` returns immediately. The HTTP
+     response is the segment row; the download runs after the response is
+     sent.
+  - `composition_segments.download_progress` must be reset to NULL on the
+     `pending → downloading` transition AND on terminal states (`ready` /
+     `failed`), so the UI can use `status` as the source of truth and only
+     read `download_progress` while `status='downloading'`.
+
 ### Phase C — Smoke render (prove the loop)
 
 > **Phase C goal: a YouTube segment with a 5s trim becomes a playable 9:16 mp4 in the

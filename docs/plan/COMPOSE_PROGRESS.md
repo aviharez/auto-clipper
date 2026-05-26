@@ -113,3 +113,91 @@ GET /api/compositions/:id → 200, returns full composition with segments/voice_
 - Spot SFX: table of sfx rows with at_sec/file/gain_db + Add button (POSTs then re-renders)
 
 **Acceptance test result:** Edit every panel field, reload page → all values persisted (target_sec, hook_text, hook_animation, captions_text, captions_mode, caption_preset, bed_music_gain_db, bed_music_duck, voiceover_kokoro_voice).
+
+---
+
+## Phase A/B post-eval fixes (2026-05-25)
+
+Read-only evaluation by Opus surfaced one bug and two latent issues. All addressed before Phase C starts.
+
+### 1. BUG — segment upload `kind` parameter location ✅ FIXED
+
+`dashboard/main.py:634` declared `kind: str` bare. FastAPI treats unannotated scalars as **query parameters**, but the frontend sends `kind` as a multipart form field (`fd.append('kind', currentKind)` in `app.js:setupCEAddSegment`). The endpoint would return 422 on every Local/Image upload. The acceptance test in Step 3.3 ("Toggle to Local, upload mp4 → row appears") had only been exercised on the YT JSON path, never the upload path.
+
+**Fix:** added `Form` to the FastAPI imports (`dashboard/main.py:11`) and changed the signature to `kind: str = Form(...)`.
+
+### 2. LATENT — `update_segment` / `delete_segment` didn't bump `composition.updated_at` ✅ FIXED
+
+Only `create_segment` and `reorder_segments` were bumping the parent's `updated_at`. Editing trim/duration/transition or deleting a segment left the list view's "Updated" column stale.
+
+**Fix:** both helpers in `clipper/compose/db.py` now look up the row's `composition_id` and call `update_composition(comp_id)` after the write. `delete_segment` also `shutil.rmtree`s the on-disk `segments/<idx>/` folder so orphan downloads don't accumulate.
+
+### 3. LATENT — `delete_segment` leaves index gaps ⏸ DEFERRED (documented)
+
+`create_segment` uses `MAX(idx)+1`, so deleting segment 1 of `[0,1,2]` and adding another yields `[0,2,3]`. Decision: **don't compact on delete**, because:
+- folders are named by `idx` — compacting requires renaming directories on disk
+- `composition_voice_ranges.segment_idx` references would have to be remapped
+- `get_segments` is consumed with `ORDER BY idx` everywhere, so ordering is correct regardless
+
+**Constraint for Phase C and later:** never assume contiguous `idx` values; iterate the list returned by `get_segments()` and use its position when an integer index is needed (e.g. in concat input order). Voice ranges should bind to the stable `segment.id`, not `segment_idx`, when used as a foreign reference — `segment_idx` should be treated as a positional hint only.
+
+---
+
+## Phase B → C Bridge (COMPLETED 2026-05-26)
+
+### Step 3.5a — Split app.js into 5 plain-script files ✅
+
+**Files created:**
+- `dashboard/static/app-core.js` — Utilities (`$`, `$$`, `app`, `toast`, `api`, `fmtDuration`, `fmtSecs`, `fmtDate`, `fmtAge`, `badge`), Sidebar helpers (`setSidebarNav`, `updateWorkerStatus`, `updateDiskStatus`), Router (`route`, `window.addEventListener`), Preset cache (`_presets`, `loadPresets`, `_presetOptions`, `_formPresetOptions`)
+- `dashboard/static/app-jobs.js` — `ACTIVE_STATES`, job list, new-job modal, job detail, candidate rendering, nudge/recut, transcript editor, deliverer logic
+- `dashboard/static/app-history.js` — `groupByDate`, `renderHistoryGrid`, `showHistory`, `renderHistoryList`
+- `dashboard/static/app-compose.js` — `showComposeList`, `renderComposeList`, `openNewComposeModal`
+- `dashboard/static/app-compose-editor.js` — Full compose editor (3.5b additions embedded: `_startSegIngestPoll`, progress strip HTML, error display, source_duration hint)
+
+**Files edited:**
+- `dashboard/static/index.html:54` — replaced `<script src="/static/app.js">` with 5 ordered script tags (core → jobs → history → compose → compose-editor)
+
+**Files deleted:**
+- `dashboard/static/app.js` — removed after all functions confirmed present in split files
+
+---
+
+### Step 3.5b — Eager YT segment ingest with progress tracking ✅
+
+**Files created:**
+- `clipper/compose/stages/__init__.py` — empty package marker
+- `clipper/compose/stages/ingest.py` — `run_for_segment(comp, seg)`: idempotent yt-dlp download with progress callbacks, ffprobe duration probe; `_probe_duration(path)` helper
+- `clipper/compose/runner.py` — `ThreadPoolExecutor(max_workers=2)`, `submit_ingest(comp_id, seg_id)`, `_run_segment_ingest`, `start()`
+
+**Files edited:**
+- `clipper/jobs.py:_migrate()` — added `("composition_segments", "download_progress", "INTEGER")` and `("composition_segments", "source_duration", "REAL")` to `new_cols`
+- `clipper/runner.py:start()` — added `import clipper.compose.runner as compose_runner` and call to `compose_runner.start()` after thread start
+- `dashboard/main.py` — added `import clipper.compose.runner as compose_runner`; `api_create_segment`: if `kind=='yt'` sets status='downloading'/download_progress=0 and calls `compose_runner.submit_ingest`; `api_upload_segment`: probes duration synchronously via `_probe_duration`, sets status='ready' and source_duration on the segment
+- `dashboard/static/style.css` — added `.ce-seg-dl-bar`, `.ce-seg-dl-fill`, `.ce-seg-error` CSS rules
+
+**Frontend behavior (app-compose-editor.js):**
+- `_startSegIngestPoll(compId)` — 1.5s recursive poll; re-renders segment rows; auto-patches `trim_out = source_duration` for newly-ready segments; stops when no segment is 'downloading'
+- `renderCESegmentRow(seg)` — shows progress bar when `status === 'downloading'`; shows error text when `status === 'failed'`
+- `renderCESegmentExpanded(seg)` — shows source_duration hint when duration not yet set
+- Poll triggered after Fetch button success, Upload button success, and on initial `showComposeEditor()` if any segment is downloading
+
+---
+
+### 4. Minor items — deferred to their natural phase
+
+- Bed-music / SFX dropdowns lose the persisted value when the library is empty (current state). Will resolve naturally when 3.20/3.21 bundle the asset libraries.
+- `/api/sfx-library` and `/api/music-library` return `duration_sec: None`. Add ffprobe-based duration computation when bundling the libraries in 3.20/3.21.
+- Sidebar `nav-compose-count` only updates on `showComposeList()`. Cosmetic; defer.
+- Dataclasses in `clipper/compose/base.py` are dead code (DB layer returns dicts, same pattern as `clipper/jobs.py`). Decision: keep for now as documentation of the schema shape; consider materializing them in Phase E if typed access is needed.
+
+### Verification
+
+```powershell
+# Local-upload path (was broken):
+# Editor → kind=Local → choose any mp4 → Upload → segment row appears, no 422.
+# ffprobe data\compositions\<id>\segments\<idx>\source.mp4 succeeds.
+
+# updated_at bump (was stale):
+# Edit segment trim_in → reload Compose list → "Updated" column reflects the edit time.
+# Delete a segment → folder data\compositions\<id>\segments\<idx>\ is gone, "Updated" bumped.
+```
