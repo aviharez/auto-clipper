@@ -377,3 +377,9 @@ Add one YouTube segment with trim → wait for download (progress bar) → click
   - `attachCERightRailHandlers` — calls `_ceAttachVoiceHandlers(comp)` at end.
 
 **Acceptance test:** Upload a 30s WAV → waveform appears in Voiceover panel → click Auto-split → N ranges appear as colored overlays → drag a handle left/right → release → value persists in DB → reload page → handle position preserved. Nudge ±0.1s buttons update range boundaries. Snap button (⌖) snaps to nearest silence.
+
+### Post-ship bug fix — drag listener accumulation ✅ FIXED
+
+**Root cause (found during verify):** `_ceAttachWaveformDrag` called `document.addEventListener('mousemove', …)` and `document.addEventListener('mouseup', …)` on every invocation. It was called from three places: initial `attachCERightRailHandlers`, the `mousemove` handler itself (to re-wire newly inserted DOM handles after each live overlay update), and `_ceRebuildWaveformOverlay` → `_ceAttachRangeListHandlers`. A single drag gesture produced O(n) listener accumulation where n = number of mousemove events fired — potentially hundreds of stacked handlers per drag, growing with each re-render.
+
+**Fix:** Extracted document-level listeners into `_ceInitDragListeners()`, guarded by a `_wrDragListenersAdded` boolean so they register exactly once per page load. Split handle wiring into `_ceWireHandleMousedown(ranges, dur)` which only attaches `mousedown` to `.ce-wr-handle` elements — safe to call on every re-render since it touches only the newly inserted DOM nodes. `_ceAttachWaveformDrag` now calls `_ceInitDragListeners()` + `_ceWireHandleMousedown()`. The `mousemove` handler calls only `_ceWireHandleMousedown` after updating the overlay, not `_ceAttachWaveformDrag`.
