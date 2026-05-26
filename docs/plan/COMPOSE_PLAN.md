@@ -808,7 +808,7 @@ unified rows with a `pipeline` field.
 
 ### Phase E — Real render pipeline (richen the smoke)
 
-- [ ] **Step 3.13 — Kokoro TTS generation**
+- [x] **Step 3.13 — Kokoro TTS generation**
 
   **Deliverables:**
   - Add to `requirements.txt`: `kokoro-onnx`, `soundfile`, `librosa`.

@@ -794,7 +794,28 @@ async def api_voiceover_upload(comp_id: str, file: UploadFile = File(...)):
 
 @app.post("/api/compositions/{comp_id}/voiceover/kokoro")
 def api_voiceover_kokoro(comp_id: str):
-    raise HTTPException(501, "Kokoro TTS coming in Phase E (Step 3.13)")
+    comp = compose_db.get_composition(comp_id)
+    if not comp:
+        raise HTTPException(404, "Composition not found")
+    text = (comp.get("captions_text") or "").strip()
+    if not text:
+        raise HTTPException(400, "No script text — add text in the Captions panel before generating voiceover")
+    voice_id = comp.get("voiceover_kokoro_voice") or "af_bella"
+    comp_dir = Path("data") / "compositions" / comp_id
+    comp_dir.mkdir(parents=True, exist_ok=True)
+    out_path = str(comp_dir / "voiceover.wav")
+    try:
+        from clipper.compose.stages import kokoro as kokoro_stage
+        duration = kokoro_stage.generate(text, voice_id, out_path)
+    except Exception as exc:
+        log.error("Kokoro TTS failed: %s", exc)
+        raise HTTPException(500, f"TTS generation failed: {exc}")
+    compose_db.update_composition(comp_id, voiceover_source="kokoro", voiceover_kokoro_text=text)
+    return {
+        "ok": True,
+        "duration_sec": duration,
+        "peaks_url": f"/api/compositions/{comp_id}/voiceover/peaks",
+    }
 
 
 @app.post("/api/compositions/{comp_id}/render")

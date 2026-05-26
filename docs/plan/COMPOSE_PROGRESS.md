@@ -319,3 +319,19 @@ Add one YouTube segment with trim → wait for download (progress bar) → click
 - `_ceReRender(e)` — removes the banner and clicks `#ce-render-btn`
 
 **Acceptance test:** 3 segments → drag segment 1 between 2 and 3 → drop → left rail list and timeline both reflect new order → `PUT /segments/order` was called → click "re-render to update" → render restarts.
+
+---
+
+## Phase E — Real render pipeline (IN PROGRESS)
+
+### Step 3.13 — Kokoro TTS generation ✅
+
+**Files edited:**
+- `requirements.txt` — added `kokoro-onnx>=0.4.0`, `soundfile>=0.12.1`, `librosa>=0.10.0`
+- `dashboard/main.py:api_voiceover_kokoro` — replaced 501 stub with real implementation: reads `captions_text`, validates non-empty, resolves `voiceover_kokoro_voice` (fallback `af_bella`), calls `kokoro_stage.generate()`, persists `voiceover_source='kokoro'` + `voiceover_kokoro_text`, returns `{ok, duration_sec, peaks_url}`
+- `dashboard/static/app-compose-editor.js` — Kokoro button handler now: saves voice selection, disables button with "Generating…" label, POSTs to `/voiceover/kokoro`, on success updates `#ce-vo-status` and shows toast, on error shows error toast; re-enables button in both paths
+
+**Files created:**
+- `clipper/compose/stages/kokoro.py` — module-level `_kokoro` singleton (lazy-loaded on first call); `_split_sentences(text, max_chars=150)` splits on sentence-boundary punctuation then word-wraps overlong chunks; `generate(text, voice_id, out_path)` chunks text, runs `kokoro_onnx.Kokoro.create()` per chunk (24 kHz mono), resamples each to 48 kHz via `librosa.resample`, concatenates, duplicates to stereo, writes PCM_16 WAV via `soundfile`; returns duration in seconds
+
+**Acceptance test:** Type a 1-sentence script in Captions panel → select Kokoro voice → click Generate voiceover → button shows "Generating…" → after model run, `data/compositions/<id>/voiceover.wav` exists → `ffprobe` shows 48000 Hz stereo → status div updates with source + duration → toast confirms success.

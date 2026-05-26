@@ -720,7 +720,21 @@ function attachCERightRailHandlers(comp) {
     kokoroBtn.onclick = async () => {
       const voice = document.getElementById('ce-kokoro-voice')?.value;
       _cePatchComp({ voiceover_kokoro_voice: voice });
-      toast('Kokoro TTS coming in Step 3.13', '');
+      kokoroBtn.disabled = true;
+      kokoroBtn.textContent = 'Generating…';
+      const statusEl = document.getElementById('ce-vo-status');
+      if (statusEl) statusEl.textContent = 'Generating voiceover…';
+      try {
+        const result = await api('POST', '/compositions/' + _compEditorId + '/voiceover/kokoro');
+        if (statusEl) statusEl.textContent = `Source: kokoro · ${result.duration_sec.toFixed(1)}s`;
+        toast('Voiceover generated (' + result.duration_sec.toFixed(1) + 's)', 'success');
+      } catch (e) {
+        if (statusEl) statusEl.textContent = 'Generation failed';
+        toast('Kokoro error: ' + e.message, 'error');
+      } finally {
+        kokoroBtn.disabled = false;
+        kokoroBtn.textContent = 'Generate voiceover';
+      }
     };
   }
   const kokoroVoice = document.getElementById('ce-kokoro-voice');
