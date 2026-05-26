@@ -185,3 +185,23 @@ def _run_render(comp_id: str) -> None:
         err = traceback.format_exc()
         log.error("Render %s failed:\n%s", comp_id, err)
         compose_db.update_composition(comp_id, status="failed", error=err[-1000:])
+
+
+def _run_finalize(comp_id: str) -> None:
+    """Copy last_render.mp4 → final.mp4 and mark as finalized."""
+    try:
+        comp = compose_db.get_composition(comp_id)
+        if not comp:
+            return
+        comp_dir = compose_db._comp_dir(comp_id)
+        last_render = comp_dir / "last_render.mp4"
+        if not last_render.exists():
+            raise RuntimeError("No last_render.mp4 found — run Render preview first")
+        final_path = str(comp_dir / "final.mp4")
+        shutil.copy2(str(last_render), final_path)
+        compose_db.update_composition(comp_id, status="finalized", final_path=final_path, error=None)
+        log.info("Finalize %s: done → %s", comp_id, final_path)
+    except Exception:
+        err = traceback.format_exc()
+        log.error("Finalize %s failed:\n%s", comp_id, err)
+        compose_db.update_composition(comp_id, status="failed", error=err[-1000:])

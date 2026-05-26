@@ -448,3 +448,83 @@ Add one YouTube segment with trim → wait for download (progress bar) → click
   - All intermediate files kept on disk (`concat_raw.mp4`, `picture.mp4`, `picture_captioned.mp4`, `picture_hooked.mp4`, `voice_track.wav`, `mix1.wav`, `body_audio.wav`, `final_audio.wav`).
 
 **Acceptance test:** 3 segments + Kokoro voiceover + bed music + 1 SFX at 2s + script captions + hook text → Render preview → final mp4 is target-length, hook plays first ~2s, captions sync, bed ducks under voice, SFX audible at ~4s (2s into body), black padding fills the tail if short.
+
+---
+
+## Phase F — Asset libraries + finalize + delivery + history (COMPLETED 2026-05-26)
+
+### Step 3.20 — SFX library ✅
+
+**Files created:**
+- `assets/sfx/click.wav` (0.08s, 1200Hz decaying sine — sharp transient)
+- `assets/sfx/chime.wav` (1.5s, 880Hz + 1760Hz harmonic bell)
+- `assets/sfx/pop.wav` (0.15s, 150Hz decaying sine — bass pop)
+- `assets/sfx/whoosh.wav` (0.5s, highpass-filtered white noise, fade in/out)
+- `assets/sfx/swoosh.wav` (0.8s, wider-range filtered white noise, fade in/out)
+- All generated with ffmpeg at 48kHz stereo 16-bit PCM.
+
+**Files edited:**
+- `dashboard/main.py` — added `_probe_audio_duration(path)` helper using ffprobe; updated `api_sfx_library` to return real `duration_sec` values.
+
+**Acceptance test:** `GET /api/sfx-library` returns 5 entries with non-null `duration_sec`. Spot SFX dropdown in the editor shows all 5.
+
+---
+
+### Step 3.21 — Bed music library ✅
+
+**Files created:**
+- `assets/music/ambient_chill.wav` (30s, A2+E3+A3+E4 chord drone with fade in/out)
+- `assets/music/lo_fi_beat.wav` (30s, pulsing bass at G2 with tremolo, rhythmic feel)
+- `assets/music/cinematic.wav` (30s, low C1+G1+C2 dark ambient drone)
+- All generated with ffmpeg at 48kHz stereo 16-bit PCM.
+
+**Files edited:**
+- `dashboard/main.py` — updated `api_music_library` to return real `duration_sec` values (reuses `_probe_audio_duration`).
+
+**Acceptance test:** `GET /api/music-library` returns 3 entries with `duration_sec ≈ 30`. Bed music dropdown populated.
+
+---
+
+### Step 3.22 — Save draft vs Finalize Video split button ✅
+
+**Files edited:**
+- `clipper/compose/render.py` — added `_run_finalize(comp_id)`: checks last_render.mp4 exists, copies it to final.mp4, sets status='finalized' + final_path. On error: status='failed'.
+- `clipper/compose/runner.py` — extended `_compose_loop` to also poll `finalize_queued`; sets status='finalizing' and dispatches `_run_finalize` to `_compose_executor`.
+- `dashboard/main.py` — added `POST /api/compositions/{id}/finalize`: validates last_render_path exists, sets status='finalize_queued'.
+- `dashboard/static/app-compose-editor.js`:
+  - Added `_FINALIZE_ACTIVE`, `_FINALIZED_STATES` constants.
+  - Added split button (`ce-split-btn`) in editor header: "Save draft" (left) + "▾" dropdown (right) containing "Finalize video".
+  - Added `_setupCEFinalizeBtn(compId, comp)`: wires save-draft (toast), dropdown toggle, finalize click → POST → `_startFinalizePoll`.
+  - Added `_startFinalizePoll(compId)`: 2.5s recursive poll; on finalized → `_updateFinalizeBtn` + `_injectDeliverBtn` + toast. On failed → error toast.
+  - Added `_updateFinalizeBtn(comp)`: updates finalize button disabled/label state.
+  - Extended initial status check to also start finalize poll for `finalize_queued`/`finalizing` states.
+- `dashboard/static/style.css` — added `.ce-split-btn`, `.ce-split-main`, `.ce-split-arrow`, `.ce-split-menu`, `.ce-split-item`, `.btn-success` styles.
+
+---
+
+### Step 3.23 — Delivery plug-in ✅
+
+**Files edited:**
+- `dashboard/main.py` — added `ComposeDeliverBody` model and `POST /api/compositions/{id}/deliver`: validates final_path, builds fake candidate dict, calls `_DELIVERERS[deliverer].deliver(...)`, persists `delivery_status` and `delivery_url`.
+- `dashboard/static/app-compose-editor.js`:
+  - Added "Deliver" button (`btn-success`) in editor header; shown only when `status` is in `_FINALIZED_STATES`.
+  - Added `_injectDeliverBtn(compId)`: injects the button dynamically after finalize completes (for transitions during the same session).
+  - Added `_setupCEDeliverBtn(compId)`: inline popover menu with "Local folder" / "Google Drive" options; POSTs to `/compositions/{id}/deliver` with chosen deliverer.
+- `dashboard/static/app-compose.js` — added "Uploaded" filter tab (shows compositions in finalized/delivered states).
+
+---
+
+### Step 3.24 — History tabs ✅
+
+**Files edited:**
+- `clipper/compose/db.py` — added `list_compositions_for_history()`: returns compositions with `pipeline='compose'` and `job_created_at=updated_at` for unified sort.
+- `dashboard/main.py` — extended `api_history` with optional `?pipeline=clip|compose|all` query param (default: `all`). Clip rows get `pipeline='clip'`; compose rows from `list_compositions_for_history`; unified view merges + sorts by `job_created_at` descending.
+- `dashboard/static/app-history.js`:
+  - Added `_histPipeline` state + pipeline tabs (All / Clip / Compose) using `.compose-tab` CSS.
+  - Clip filters (source/status dropdowns) hidden when `pipeline=compose`.
+  - Added `_renderHistoryComposeCard(c)`: shows `thumbs/1.jpg` if render exists, title, niche, status badge; clicks to `#compose/{id}`.
+  - `renderHistoryGrid` routes to clip or compose card renderer based on `c.pipeline`.
+  - `renderHistoryList` passes `pipeline` query param; compose pipeline skips clip-only filters.
+- `dashboard/static/style.css` — added `.compose-filter-tabs`, `.hist-pipeline-tabs`, `.compose-tab` styles.
+
+**Acceptance test:** History page shows All/Clip/Compose tabs. Clip tab shows only clip candidates. Compose tab shows compositions with thumbnail previews. All tab interleaves by date. Existing Clip flows unaffected.

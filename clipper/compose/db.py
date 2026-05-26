@@ -215,3 +215,23 @@ def update_sfx(sfx_id: str, **fields):
 def delete_sfx(sfx_id: str):
     with get_conn() as conn:
         conn.execute("DELETE FROM composition_sfx WHERE id = ?", (sfx_id,))
+
+
+# ── History helper ────────────────────────────────────────────────────────────
+
+
+def list_compositions_for_history() -> list:
+    """Return compositions in a unified history row shape (for /api/history?pipeline=compose)."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, title, niche, status, final_path, last_render_path, "
+            "delivery_status, delivery_url, created_at, updated_at "
+            "FROM compositions ORDER BY updated_at DESC"
+        ).fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["pipeline"] = "compose"
+        d["job_created_at"] = d["updated_at"]
+        result.append(d)
+    return result

@@ -3,6 +3,10 @@
 let _composePoll;
 let _newComposeModalEl = null;
 
+let _composeListFilter = 'all'; // 'all' | 'drafts' | 'uploaded'
+
+const _COMPOSE_UPLOADED_STATES = ['finalized', 'delivered_local', 'delivered_gdrive'];
+
 async function showComposeList() {
   clearTimeout(_composePoll);
   clearTimeout(_listPoll);
@@ -19,6 +23,11 @@ async function showComposeList() {
         </div>
         <button class="btn btn-primary" id="btn-new-compose">+ New compose</button>
       </div>
+      <div class="compose-filter-tabs" id="compose-filter-tabs">
+        <button class="compose-tab ${_composeListFilter === 'all' ? 'active' : ''}" data-filter="all">All</button>
+        <button class="compose-tab ${_composeListFilter === 'drafts' ? 'active' : ''}" data-filter="drafts">Drafts</button>
+        <button class="compose-tab ${_composeListFilter === 'uploaded' ? 'active' : ''}" data-filter="uploaded">Uploaded</button>
+      </div>
     </div>
     <div class="compose-table-header" id="compose-table-header" style="display:none">
       <div>Title</div><div>Status</div><div>Segments</div><div>Target</div><div>Updated</div><div></div>
@@ -29,6 +38,13 @@ async function showComposeList() {
   `;
 
   $('#btn-new-compose').onclick = openNewComposeModal;
+  $$('.compose-tab').forEach(tab => {
+    tab.onclick = () => {
+      _composeListFilter = tab.dataset.filter;
+      $$('.compose-tab').forEach(t => t.classList.toggle('active', t.dataset.filter === _composeListFilter));
+      renderComposeList();
+    };
+  });
   await renderComposeList();
 }
 
@@ -42,17 +58,28 @@ async function renderComposeList() {
     const navEl = document.getElementById('nav-compose-count');
     if (navEl) navEl.textContent = comps.length || '';
 
+    const filtered = comps.filter(c => {
+      if (_composeListFilter === 'drafts') return !_COMPOSE_UPLOADED_STATES.includes(c.status);
+      if (_composeListFilter === 'uploaded') return _COMPOSE_UPLOADED_STATES.includes(c.status);
+      return true;
+    });
+
     const hdr = document.getElementById('compose-table-header');
 
-    if (!comps.length) {
+    if (!filtered.length) {
       if (hdr) hdr.style.display = 'none';
-      wrap.innerHTML = '<div class="empty">No compositions yet. Click "+ New compose" to start.</div>';
+      const msg = _composeListFilter === 'uploaded'
+        ? 'No finalized compositions yet.'
+        : _composeListFilter === 'drafts'
+        ? 'No drafts. Click "+ New compose" to start.'
+        : 'No compositions yet. Click "+ New compose" to start.';
+      wrap.innerHTML = `<div class="empty">${msg}</div>`;
       return;
     }
 
     if (hdr) hdr.style.display = '';
 
-    wrap.innerHTML = comps.map(c => `
+    wrap.innerHTML = filtered.map(c => `
       <div class="compose-row" onclick="location.hash='compose/${c.id}'">
         <div>
           <div class="job-row-title">${escAttr(c.title)}</div>

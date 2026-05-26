@@ -40,15 +40,21 @@ def _compose_loop() -> None:
             from clipper.jobs import get_conn
             with get_conn() as conn:
                 row = conn.execute(
-                    "SELECT id FROM compositions WHERE status='render_queued' ORDER BY updated_at LIMIT 1"
+                    "SELECT id, status FROM compositions "
+                    "WHERE status IN ('render_queued', 'finalize_queued') "
+                    "ORDER BY updated_at LIMIT 1"
                 ).fetchone()
             if row:
                 comp_id = row["id"]
-                compose_db.update_composition(comp_id, status="rendering")
-                log.info("Compose: dispatching render for %s", comp_id)
-                # Import here to avoid circular imports at module load time
                 from clipper.compose import render as compose_render
-                _compose_executor.submit(compose_render._run_render, comp_id)
+                if row["status"] == "render_queued":
+                    compose_db.update_composition(comp_id, status="rendering")
+                    log.info("Compose: dispatching render for %s", comp_id)
+                    _compose_executor.submit(compose_render._run_render, comp_id)
+                elif row["status"] == "finalize_queued":
+                    compose_db.update_composition(comp_id, status="finalizing")
+                    log.info("Compose: dispatching finalize for %s", comp_id)
+                    _compose_executor.submit(compose_render._run_finalize, comp_id)
         except Exception:
             log.error("Compose loop error:\n%s", traceback.format_exc())
         time.sleep(2)

@@ -937,7 +937,7 @@ unified rows with a `pipeline` field.
 
 ### Phase F — Asset libraries + finalize + delivery + history
 
-- [ ] **Step 3.20 — SFX library**
+- [x] **Step 3.20 — SFX library**
 
   **Deliverables:** Bundle 5 royalty-free SFX in `assets/sfx/` (e.g. `whoosh.wav`,
   `click.wav`, `chime.wav`, `pop.wav`, `swoosh.wav`). `GET /api/sfx-library` scans the
@@ -947,7 +947,7 @@ unified rows with a `pipeline` field.
   **Acceptance test:** Spot SFX dropdown shows 5 entries. Add a row, pick one, set at_sec
   = 3, render → SFX audible at 3s.
 
-- [ ] **Step 3.21 — Bed music library**
+- [x] **Step 3.21 — Bed music library**
 
   **Deliverables:** Bundle 3–5 royalty-free instrumentals in `assets/music/`.
   `GET /api/music-library` scans the folder. Bed music dropdown populated.
@@ -955,7 +955,7 @@ unified rows with a `pipeline` field.
   **Acceptance test:** Pick a bed track, render → music plays under composition; ducks
   under voice if duck=true.
 
-- [ ] **Step 3.22 — Save draft vs Finalize Video split button**
+- [x] **Step 3.22 — Save draft vs Finalize Video split button**
 
   **Deliverables:**
   - Editor header: split button "Save draft (⌘S)" + dropdown "Finalize video (⇧⌘S)".
@@ -969,7 +969,7 @@ unified rows with a `pipeline` field.
   **Acceptance test:** Finalize → composition appears under Uploaded filter; `final.mp4`
   exists on disk.
 
-- [ ] **Step 3.23 — Delivery plug-in**
+- [x] **Step 3.23 — Delivery plug-in**
 
   **Deliverables:** `POST /api/compositions/{id}/deliver` (body: `{deliverer?:
   "local"|"gdrive"}`) — build a fake `candidate`-shaped dict (`id`, `title`,
@@ -981,7 +981,7 @@ unified rows with a `pipeline` field.
   `DELIVERY_LOCAL_OUTPUT_DIR/<title-slug>/<id>.mp4`. Then click Deliver (gdrive) →
   ends up in the configured rclone destination.
 
-- [ ] **Step 3.24 — History tabs**
+- [x] **Step 3.24 — History tabs**
 
   **Deliverables:** Extend `GET /api/history` with `?pipeline=clip|compose|all`
   (default `all`); return unified rows with a `pipeline` field. Add Clip / Compose /

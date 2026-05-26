@@ -7,6 +7,8 @@ let _wfPeaks = [];          // cached peaks for current composition
 let _wfDuration = 0;        // cached voiceover duration
 const _segPatchTimers = {};
 const _RENDER_ACTIVE = ['render_queued', 'rendering'];
+const _FINALIZE_ACTIVE = ['finalize_queued', 'finalizing'];
+const _FINALIZED_STATES = ['finalized', 'delivered_local', 'delivered_gdrive'];
 
 async function showComposeEditor(compId) {
   clearTimeout(_composePoll);
@@ -30,6 +32,11 @@ async function showComposeEditor(compId) {
   const segCount = (comp.segments || []).filter(s => s.status !== 'failed').length;
   const renderBtnDisabled = segCount === 0 ? 'disabled' : '';
   const renderBtnLabel = _RENDER_ACTIVE.includes(comp.status) ? 'Rendering…' : 'Render preview';
+  const hasRender = !!(comp.last_render_path);
+  const isFinalized = _FINALIZED_STATES.includes(comp.status);
+  const isFinalizing = _FINALIZE_ACTIVE.includes(comp.status);
+  const finalizeBtnDisabled = (!hasRender || isFinalizing) ? 'disabled' : '';
+  const finalizeBtnLabel = isFinalizing ? 'Finalizing…' : 'Finalize video';
 
   app.innerHTML = `
     <div class="compose-editor">
@@ -40,6 +47,14 @@ async function showComposeEditor(compId) {
         <div style="flex:1"></div>
         <button class="btn btn-primary btn-sm" id="ce-render-btn" ${renderBtnDisabled}
                 style="margin-right:8px">${renderBtnLabel}</button>
+        <div class="ce-split-btn" style="margin-right:8px">
+          <button class="btn btn-ghost btn-sm ce-split-main" id="ce-save-btn">Save draft</button>
+          <button class="btn btn-ghost btn-sm ce-split-arrow" id="ce-split-arrow" aria-label="More actions">▾</button>
+          <div class="ce-split-menu" id="ce-split-menu" style="display:none">
+            <button class="ce-split-item" id="ce-finalize-btn" ${finalizeBtnDisabled}>${finalizeBtnLabel}</button>
+          </div>
+        </div>
+        ${isFinalized ? `<button class="btn btn-success btn-sm" id="ce-deliver-btn" style="margin-right:8px">Deliver</button>` : ''}
         ${badge(comp.status)}
       </div>
       <div class="compose-editor-body">
@@ -93,6 +108,8 @@ async function showComposeEditor(compId) {
   renderCERightRail(comp);
   setupCEAddSegment(compId);
   setupCERenderBtn(compId, comp);
+  _setupCEFinalizeBtn(compId, comp);
+  _setupCEDeliverBtn(compId);
   renderCETimeline(comp);
 
   // 3.5b: start polling if any segment is downloading
@@ -100,11 +117,13 @@ async function showComposeEditor(compId) {
     _startSegIngestPoll(compId);
   }
 
-  // 3.9: restore video player if already rendered, or resume render poll if rendering
-  if (comp.status === 'rendered' || comp.status === 'finalized' || comp.status === 'delivered_local' || comp.status === 'delivered_gdrive') {
+  // 3.9: restore video player if already rendered/finalized, or resume poll if in-flight
+  if (comp.status === 'rendered' || _FINALIZED_STATES.includes(comp.status)) {
     _showCenterVideo(compId);
   } else if (_RENDER_ACTIVE.includes(comp.status)) {
     _startRenderPoll(compId);
+  } else if (_FINALIZE_ACTIVE.includes(comp.status)) {
+    _startFinalizePoll(compId);
   }
 }
 
@@ -134,25 +153,145 @@ function _startRenderPoll(compId) {
     if (_compEditorId !== compId) return;
     try {
       const comp = await api('GET', '/compositions/' + compId);
-      // Update status pill in header
       const pillEl = document.querySelector('.compose-editor-header .pill');
       if (pillEl) pillEl.outerHTML = badge(comp.status);
       const btn = document.getElementById('ce-render-btn');
-      if (comp.status === 'rendered' || comp.status === 'finalized') {
+      if (comp.status === 'rendered' || _FINALIZED_STATES.includes(comp.status)) {
         if (btn) { btn.disabled = false; btn.textContent = 'Re-render'; }
         _showCenterVideo(compId);
-        return; // stop polling
+        _updateFinalizeBtn(comp);
+        return;
       } else if (comp.status === 'failed') {
         if (btn) { btn.disabled = false; btn.textContent = 'Render preview'; }
         _showCenterError(comp.error || 'Render failed');
-        return; // stop polling
+        return;
       }
-      // Still rendering — continue
       _startRenderPoll(compId);
     } catch (_) {
-      _startRenderPoll(compId); // retry on network error
+      _startRenderPoll(compId);
     }
   }, 2500);
+}
+
+function _startFinalizePoll(compId) {
+  clearTimeout(_renderPoll);
+  _renderPoll = setTimeout(async () => {
+    if (_compEditorId !== compId) return;
+    try {
+      const comp = await api('GET', '/compositions/' + compId);
+      const pillEl = document.querySelector('.compose-editor-header .pill');
+      if (pillEl) pillEl.outerHTML = badge(comp.status);
+      if (_FINALIZED_STATES.includes(comp.status)) {
+        _updateFinalizeBtn(comp);
+        _injectDeliverBtn(compId);
+        toast('Finalized! Ready to deliver.', 'success');
+        return;
+      } else if (comp.status === 'failed') {
+        _updateFinalizeBtn(comp);
+        toast('Finalize failed: ' + (comp.error || ''), 'error');
+        return;
+      }
+      _startFinalizePoll(compId);
+    } catch (_) {
+      _startFinalizePoll(compId);
+    }
+  }, 2500);
+}
+
+function _updateFinalizeBtn(comp) {
+  const btn = document.getElementById('ce-finalize-btn');
+  if (!btn) return;
+  const hasRender = !!(comp.last_render_path);
+  const isFinalizing = _FINALIZE_ACTIVE.includes(comp.status);
+  btn.disabled = !hasRender || isFinalizing;
+  btn.textContent = isFinalizing ? 'Finalizing…' : 'Finalize video';
+}
+
+function _injectDeliverBtn(compId) {
+  if (document.getElementById('ce-deliver-btn')) return;
+  const splitBtn = document.querySelector('.ce-split-btn');
+  if (!splitBtn) return;
+  const btn = document.createElement('button');
+  btn.className = 'btn btn-success btn-sm';
+  btn.id = 'ce-deliver-btn';
+  btn.textContent = 'Deliver';
+  btn.style.marginRight = '8px';
+  splitBtn.parentNode.insertBefore(btn, splitBtn);
+  _setupCEDeliverBtn(compId);
+}
+
+function _setupCEFinalizeBtn(compId, comp) {
+  const saveBtn = document.getElementById('ce-save-btn');
+  const arrowBtn = document.getElementById('ce-split-arrow');
+  const menu = document.getElementById('ce-split-menu');
+  const finalizeBtn = document.getElementById('ce-finalize-btn');
+
+  if (saveBtn) {
+    saveBtn.onclick = () => toast('Draft saved (all changes are auto-persisted)');
+  }
+
+  if (arrowBtn && menu) {
+    arrowBtn.onclick = (e) => {
+      e.stopPropagation();
+      const open = menu.style.display !== 'none';
+      menu.style.display = open ? 'none' : 'block';
+    };
+    document.addEventListener('click', () => { if (menu) menu.style.display = 'none'; }, { once: false });
+  }
+
+  if (finalizeBtn) {
+    finalizeBtn.onclick = async () => {
+      if (menu) menu.style.display = 'none';
+      finalizeBtn.disabled = true;
+      finalizeBtn.textContent = 'Finalizing…';
+      try {
+        await api('POST', '/compositions/' + compId + '/finalize');
+        _startFinalizePoll(compId);
+      } catch (e) {
+        toast('Finalize error: ' + e.message, 'error');
+        _updateFinalizeBtn(comp);
+      }
+    };
+  }
+}
+
+function _setupCEDeliverBtn(compId) {
+  const btn = document.getElementById('ce-deliver-btn');
+  if (!btn) return;
+  btn.onclick = async (e) => {
+    e.stopPropagation();
+    // Show a small inline menu
+    let menu = document.getElementById('ce-deliver-menu');
+    if (menu) { menu.remove(); return; }
+    menu = document.createElement('div');
+    menu.id = 'ce-deliver-menu';
+    menu.className = 'ce-split-menu';
+    menu.style.cssText = 'display:block;right:0;left:auto;top:calc(100% + 4px)';
+    menu.innerHTML = `
+      <button class="ce-split-item" data-deliverer="local">Local folder</button>
+      <button class="ce-split-item" data-deliverer="gdrive">Google Drive</button>
+    `;
+    btn.style.position = 'relative';
+    btn.appendChild(menu);
+    menu.querySelectorAll('.ce-split-item').forEach(item => {
+      item.onclick = async (ev) => {
+        ev.stopPropagation();
+        menu.remove();
+        btn.disabled = true;
+        btn.textContent = 'Delivering…';
+        try {
+          const result = await api('POST', '/compositions/' + compId + '/deliver', { deliverer: item.dataset.deliverer });
+          toast('Delivered: ' + result.status, 'success');
+          btn.textContent = 'Delivered ✓';
+        } catch (err) {
+          toast('Deliver error: ' + err.message, 'error');
+          btn.disabled = false;
+          btn.textContent = 'Deliver';
+        }
+      };
+    });
+    document.addEventListener('click', () => { menu.remove(); }, { once: true });
+  };
 }
 
 function _showCenterVideo(compId) {

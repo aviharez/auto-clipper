@@ -483,8 +483,24 @@ def api_system():
 
 
 @app.get("/api/history")
-def api_history(source_url: Optional[str] = None, status: Optional[str] = None):
-    return db.list_candidates_all(source_url=source_url, status=status)
+def api_history(
+    source_url: Optional[str] = None,
+    status: Optional[str] = None,
+    pipeline: Optional[str] = None,  # 'clip' | 'compose' | 'all'
+):
+    pipeline = pipeline or "all"
+    if pipeline == "compose":
+        return compose_db.list_compositions_for_history()
+    clip_rows = db.list_candidates_all(source_url=source_url, status=status)
+    for r in clip_rows:
+        r["pipeline"] = "clip"
+    if pipeline == "clip":
+        return clip_rows
+    # 'all': merge and sort by date descending
+    compose_rows = compose_db.list_compositions_for_history()
+    all_rows = clip_rows + compose_rows
+    all_rows.sort(key=lambda r: r.get("job_created_at", ""), reverse=True)
+    return all_rows
 
 
 @app.get("/api/history/sources")
@@ -753,6 +769,19 @@ def api_delete_sfx(sfx_id: str):
     return {"ok": True}
 
 
+def _probe_audio_duration(path: Path) -> Optional[float]:
+    import subprocess as _sp
+    r = _sp.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=nw=1:nk=1", str(path)],
+        capture_output=True, text=True,
+    )
+    try:
+        return round(float(r.stdout.strip()), 3)
+    except Exception:
+        return None
+
+
 @app.get("/api/sfx-library")
 def api_sfx_library():
     sfx_dir = Path(__file__).parent.parent / "assets" / "sfx"
@@ -761,7 +790,7 @@ def api_sfx_library():
     items = []
     for f in sorted(sfx_dir.iterdir()):
         if f.suffix.lower() in (".wav", ".mp3", ".ogg"):
-            items.append({"name": f.stem, "path": str(f), "duration_sec": None})
+            items.append({"name": f.stem, "path": str(f), "duration_sec": _probe_audio_duration(f)})
     return items
 
 
@@ -773,7 +802,7 @@ def api_music_library():
     items = []
     for f in sorted(music_dir.iterdir()):
         if f.suffix.lower() in (".wav", ".mp3", ".ogg"):
-            items.append({"name": f.stem, "path": str(f), "duration_sec": None})
+            items.append({"name": f.stem, "path": str(f), "duration_sec": _probe_audio_duration(f)})
     return items
 
 
@@ -855,6 +884,51 @@ def api_render_composition(comp_id: str):
         raise HTTPException(400, "No valid segments to render (add at least one segment)")
     compose_db.update_composition(comp_id, status="render_queued")
     return {"status": "render_queued"}
+
+
+@app.post("/api/compositions/{comp_id}/finalize")
+def api_finalize_composition(comp_id: str):
+    comp = compose_db.get_composition(comp_id)
+    if not comp:
+        raise HTTPException(404, "Composition not found")
+    if not comp.get("last_render_path"):
+        raise HTTPException(400, "No render available — click Render preview first")
+    compose_db.update_composition(comp_id, status="finalize_queued")
+    return {"status": "finalize_queued"}
+
+
+class ComposeDeliverBody(BaseModel):
+    deliverer: Optional[str] = None  # null → use DEFAULT_DELIVERER
+
+
+@app.post("/api/compositions/{comp_id}/deliver")
+def api_deliver_composition(comp_id: str, body: ComposeDeliverBody = ComposeDeliverBody()):
+    comp = compose_db.get_composition(comp_id)
+    if not comp:
+        raise HTTPException(404, "Composition not found")
+    if not comp.get("final_path"):
+        raise HTTPException(400, "Composition not finalized — finalize first")
+    deliverer_id = body.deliverer or DEFAULT_DELIVERER
+    deliverer = _DELIVERERS.get(deliverer_id)
+    if not deliverer:
+        raise HTTPException(400, f"Unknown deliverer: {deliverer_id!r}")
+    final_path = Path(comp["final_path"])
+    if not final_path.exists():
+        raise HTTPException(404, "final.mp4 not found on disk")
+    fake_candidate = {
+        "id": comp_id,
+        "title": comp.get("title") or "composition",
+        "output_path": str(final_path),
+    }
+    fake_job = {"id": comp_id, "source_url": "", "status": "finalized"}
+    try:
+        compose_db.update_composition(comp_id, delivery_status="delivering")
+        status = deliverer.deliver(final_path, fake_job, fake_candidate)
+        compose_db.update_composition(comp_id, delivery_status=status, delivery_url=str(final_path))
+        return {"status": status, "delivery_url": str(final_path)}
+    except Exception as e:
+        compose_db.update_composition(comp_id, delivery_status="failed")
+        raise HTTPException(500, str(e))
 
 
 @app.get("/compositions/{comp_id}/render")
