@@ -232,6 +232,25 @@ def api_retry_job(job_id: str):
     return {"status": "pending"}
 
 
+_ACTIVE_JOB_STATES = {"pending", "downloading", "cutting", "transcribing",
+                       "captioning", "creating_hook", "assembling", "delivering"}
+
+
+@app.delete("/api/jobs/{job_id}")
+def api_delete_job(job_id: str):
+    job = db.get_job(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if job["status"] in _ACTIVE_JOB_STATES:
+        raise HTTPException(
+            409,
+            detail=f"Job is currently '{job['status']}' — wait for it to finish or fail before deleting.",
+        )
+    shutil.rmtree(JOBS_DIR / job_id, ignore_errors=True)
+    db.delete_job(job_id)
+    return {"deleted": True}
+
+
 # ── API: Candidates ───────────────────────────────────────────────────────────
 
 

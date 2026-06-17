@@ -124,6 +124,13 @@ def update_job(job_id: str, **fields):
         )
 
 
+def delete_job(job_id: str):
+    """Delete a job and all its candidate rows (candidates first, no ON DELETE CASCADE)."""
+    with get_conn() as conn:
+        conn.execute("DELETE FROM candidates WHERE job_id = ?", (job_id,))
+        conn.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
+
+
 # ── Candidates ───────────────────────────────────────────────────────────────
 
 

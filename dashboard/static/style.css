@@ -364,7 +364,7 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .job-row {
   display: grid;
-  grid-template-columns: 1fr 170px 120px 90px 18px;
+  grid-template-columns: 1fr 170px 120px 90px 18px 28px;
   align-items: center;
   gap: 14px;
   padding: 13px 26px;
@@ -372,6 +372,28 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   background: var(--surface);
   cursor: pointer;
   transition: background 0.1s;
+}
+
+.job-row-delete {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+  line-height: 1;
+}
+.job-row-delete:hover {
+  background: var(--red-soft);
+  color: var(--red);
+  border-color: var(--red);
 }
 
 .job-row:hover { background: var(--surface-alt); }

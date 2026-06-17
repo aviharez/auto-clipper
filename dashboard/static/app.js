@@ -598,8 +598,13 @@ async function renderJobList() {
           ${outputCell}
           <div class="job-row-age">${fmtAge(j.created_at)}</div>
           <div class="job-row-chevron">›</div>
+          <button class="job-row-delete" data-delete-job="${j.id}" title="Delete job">✕</button>
         </div>`;
     }).join('');
+
+    $$('[data-delete-job]').forEach(btn => {
+      btn.onclick = (e) => { e.stopPropagation(); deleteJob(btn.dataset.deleteJob); };
+    });
 
     clearTimeout(_listPoll);
     _listPoll = null;
@@ -1245,6 +1250,17 @@ async function retryJob(jobId) {
     toast('Job re-queued…');
   } catch (e) {
     toast('Error: ' + e.message, 'error');
+  }
+}
+
+async function deleteJob(jobId) {
+  if (!confirm('Delete this job and all its video files? This cannot be undone.')) return;
+  try {
+    await api('DELETE', `/jobs/${jobId}`);
+    toast('Job deleted', 'success');
+    await renderJobList();
+  } catch (e) {
+    toast(e.message, 'error');
   }
 }
 
